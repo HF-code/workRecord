@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App as AntdApp, Button, Card, DatePicker, Input, Select, Space, Typography, Upload } from 'antd';
-import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import { App as AntdApp, Button, Card, DatePicker, Empty, Input, List, Modal, Select, Space, Typography, Upload } from 'antd';
+import { BarChartOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Requirement, Status } from './types';
 import { loadProjects, loadRequirements, saveProjects, saveRequirements } from './storage';
@@ -17,6 +17,7 @@ export default function App() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [projectMgrOpen, setProjectMgrOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const [filterStatuses, setFilterStatuses] = useState<Status[]>([]);
   const [filterProject, setFilterProject] = useState<string | undefined>(undefined);
@@ -41,6 +42,17 @@ export default function App() {
       return true;
     });
   }, [requirements, filterStatuses, filterProject, filterReleaseDate, keyword]);
+
+  // 当前筛选结果中各项目的需求数（一条需求涉及多个项目时分别计数）
+  const projectStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of filtered) {
+      for (const it of new Set(r.items.map((i) => i.project))) {
+        counts.set(it, (counts.get(it) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [filtered]);
 
   const updateRequirement = (id: string, patch: Partial<Requirement>) => {
     setRequirements((list) =>
@@ -212,12 +224,28 @@ export default function App() {
             </Space>
           </div>
 
-          <div style={{ marginBottom: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              gap: 16,
+              marginBottom: 16,
+            }}
+          >
             <StatsBar
               requirements={requirements}
               activeStatuses={filterStatuses}
               onToggle={toggleStatusFilter}
             />
+            <Button
+              type="text"
+              icon={<BarChartOutlined />}
+              onClick={() => setStatsOpen(true)}
+              style={{ flexShrink: 0, color: '#1677ff' }}
+            >
+              统计项目
+            </Button>
           </div>
 
           <Space size="middle" wrap style={{ marginBottom: 16 }}>
@@ -290,6 +318,34 @@ export default function App() {
         onChange={setProjects}
         onClose={() => setProjectMgrOpen(false)}
       />
+
+      <Modal
+        title={`涉及项目（${projectStats.length} 个）`}
+        open={statsOpen}
+        onCancel={() => setStatsOpen(false)}
+        width={420}
+        okText="复制项目名"
+        onOk={async () => {
+          await navigator.clipboard.writeText(projectStats.map(([p]) => p).join('\n'));
+          message.success('已复制');
+        }}
+      >
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          当前筛选结果共 {filtered.length} 条需求，按需求数排序
+        </Typography.Text>
+        <List
+          size="small"
+          dataSource={projectStats}
+          locale={{ emptyText: <Empty description="当前筛选结果不涉及任何项目" /> }}
+          style={{ maxHeight: 420, overflow: 'auto', marginTop: 8 }}
+          renderItem={([project, count]) => (
+            <List.Item style={{ padding: '6px 0' }}>
+              <span>{project}</span>
+              <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>{count} 条</span>
+            </List.Item>
+          )}
+        />
+      </Modal>
     </div>
   );
 }
