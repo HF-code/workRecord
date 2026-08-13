@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import type { Requirement } from './types';
+import { STATUSES, type ProjectBranch, type Requirement, type Status } from './types';
 
 export interface ExportPayload {
   version: 1;
@@ -42,4 +42,74 @@ export function findOlderThanOneMonth(list: Requirement[]): Requirement[] {
 
 export function exportAll(list: Requirement[]): void {
   downloadJson(buildExportPayload('all', list));
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isValidStatus(v: unknown): v is Status {
+  return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
+}
+
+function isValidItem(v: unknown): v is ProjectBranch {
+  if (typeof v !== 'object' || v === null) return false;
+  const it = v as Record<string, unknown>;
+  return (
+    typeof it.id === 'string' &&
+    typeof it.project === 'string' &&
+    it.project.trim() !== '' &&
+    typeof it.branch === 'string' &&
+    it.branch.trim() !== ''
+  );
+}
+
+function isValidRequirement(v: unknown): v is Requirement {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.id === 'string' &&
+    typeof r.name === 'string' &&
+    r.name.trim() !== '' &&
+    typeof r.tapdUrl === 'string' &&
+    /^https?:\/\//.test(r.tapdUrl) &&
+    Array.isArray(r.items) &&
+    r.items.length > 0 &&
+    r.items.every(isValidItem) &&
+    isValidStatus(r.status) &&
+    (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate)))
+  );
+}
+
+export interface ImportResult {
+  requirements: Requirement[];
+  /** 文件中格式非法被丢弃的条数 */
+  invalidCount: number;
+}
+
+/** 解析导入文件，失败时抛错（JSON 损坏 / 不是本系统导出格式） */
+export function parseImportFile(text: string): ImportResult {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('文件不是合法的 JSON');
+  }
+  const payload = data as Partial<ExportPayload>;
+  if (payload?.version !== 1 || !Array.isArray(payload.requirements)) {
+    throw new Error('文件格式不正确，请使用本系统导出的 JSON 文件');
+  }
+  const now = new Date().toISOString();
+  const valid: Requirement[] = [];
+  let invalidCount = 0;
+  for (const raw of payload.requirements as unknown[]) {
+    if (isValidRequirement(raw)) {
+      valid.push({
+        ...raw,
+        createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
+        updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : now,
+      });
+    } else {
+      invalidCount += 1;
+    }
+  }
+  return { requirements: valid, invalidCount };
 }

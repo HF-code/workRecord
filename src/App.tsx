@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App as AntdApp, Button, Card, DatePicker, Input, Select, Space, Typography } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { App as AntdApp, Button, Card, DatePicker, Input, Select, Space, Typography, Upload } from 'antd';
+import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Requirement, Status } from './types';
 import { loadProjects, loadRequirements, saveProjects, saveRequirements } from './storage';
-import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth } from './export';
+import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from './export';
 import RequirementForm from './components/RequirementForm';
 import RequirementTable from './components/RequirementTable';
 import StatsBar from './components/StatsBar';
@@ -122,6 +122,48 @@ export default function App() {
     });
   };
 
+  const handleImportFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const { requirements: imported, invalidCount } = parseImportFile(text);
+      if (imported.length === 0) {
+        message.warning(
+          invalidCount > 0 ? `没有可导入的数据（${invalidCount} 条格式非法）` : '文件中没有数据',
+        );
+        return;
+      }
+      const existingIds = new Set(requirements.map((r) => r.id));
+      const fresh = imported.filter((r) => !existingIds.has(r.id));
+      const dupCount = imported.length - fresh.length;
+      if (fresh.length === 0) {
+        message.info(`${imported.length} 条数据均已存在，无需导入`);
+        return;
+      }
+      modal.confirm({
+        title: '确认导入',
+        content:
+          `共解析出 ${imported.length} 条有效数据` +
+          (dupCount > 0 ? `，其中 ${dupCount} 条与现有数据重复将跳过` : '') +
+          (invalidCount > 0 ? `，${invalidCount} 条格式非法被丢弃` : '') +
+          `。实际导入 ${fresh.length} 条。`,
+        okText: '导入',
+        cancelText: '取消',
+        onOk: () => {
+          setRequirements((list) => {
+            const ids = new Set(list.map((r) => r.id));
+            return [...imported.filter((r) => !ids.has(r.id)), ...list];
+          });
+          setProjects((list) => [
+            ...new Set([...list, ...fresh.flatMap((r) => r.items.map((it) => it.project))]),
+          ]);
+          message.success(`已导入 ${fresh.length} 条数据`);
+        },
+      });
+    } catch (e) {
+      message.error(`导入失败：${(e as Error).message}`);
+    }
+  };
+
   const toggleStatusFilter = (status: Status) => {
     setFilterStatuses((list) =>
       list.includes(status) ? list.filter((s) => s !== status) : [...list, status],
@@ -155,6 +197,16 @@ export default function App() {
                 登记需求
               </Button>
               <Button onClick={() => setProjectMgrOpen(true)}>项目管理</Button>
+              <Upload
+                accept=".json,application/json"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void handleImportFile(file);
+                  return false;
+                }}
+              >
+                <Button icon={<UploadOutlined />}>导入数据</Button>
+              </Upload>
               <Button onClick={handleExportAll}>导出全部</Button>
               <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
             </Space>
