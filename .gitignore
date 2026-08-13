@@ -19,6 +19,14 @@ lerna-debug.log*
 .idea/
 .vscode/*
 !.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# ===== VSCode 插件构建产物 =====
+extension/media/
+extension/dist/
+extension/node_modules/
+*.vsix
 *.suo
 *.ntvs*
 *.njsproj

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:extension": "tsc --noEmit && vite build --mode extension",
+    "build:plugin": "npm run build:extension && cd extension && npm run compile"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",

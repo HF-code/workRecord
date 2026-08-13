@@ -1,0 +1,43 @@
+{
+  "name": "work-tracker",
+  "displayName": "工作记录（Work Tracker）",
+  "description": "需求交付台账：在 IDE 内跟踪研发需求交付进度，数据持久化到用户级 globalState",
+  "version": "0.1.0",
+  "publisher": "work-tracker",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://example.invalid/work-record.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "workTracker.openPanel",
+        "title": "打开工作记录",
+        "category": "Work Tracker"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "~5.6.2"
+  }
+}

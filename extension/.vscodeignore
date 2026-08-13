@@ -1,0 +1,7 @@
+# 打包时排除开发文件与源码，仅保留 media/（webview 产物）与 dist/（主进程）
+.vscode/**
+src/**
+node_modules/**
+**/*.map
+tsconfig.json
+*.tsbuildinfo
