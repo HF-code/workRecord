@@ -2,9 +2,8 @@
 node_modules/
 
 # ===== 构建产物 =====
-# 注意：Gitee Pages 部署目录是 /dist，需要提交到仓库，因此这里【不忽略】dist
-# 如果改用其他部署方式需要忽略 dist，请打开下面这行注释
-# dist/
+# 使用 Cloudflare Pages / Vercel 等平台自动构建，dist 由平台生成，不提交
+dist/
 
 # ===== 日志 =====
 logs/

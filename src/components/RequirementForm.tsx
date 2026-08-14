@@ -13,19 +13,22 @@ interface FormValues {
   items: { id?: string; project: string; branch: string }[];
 }
 
+/** 表单提交的值（releaseDate 已格式化为 'YYYY-MM-DD'） */
+export interface RequirementFormValues {
+  name: string;
+  tapdUrl: string;
+  status: Status;
+  releaseDate: string | null;
+  items: { id?: string; project: string; branch: string }[];
+}
+
 interface Props {
   open: boolean;
   editing: Requirement | null;
   projects: string[];
   onAddProject: (name: string) => void;
   onCancel: () => void;
-  onSubmit: (values: {
-    name: string;
-    tapdUrl: string;
-    status: Status;
-    releaseDate: string | null;
-    items: { id?: string; project: string; branch: string }[];
-  }) => void;
+  onSubmit: (values: RequirementFormValues) => void;
 }
 
 export default function RequirementForm({
