@@ -12,6 +12,7 @@ const ENV_OPTIONS: { label: string; value: BuildEnv }[] = [
   { label: 'dev', value: 'dev' },
   { label: 'test', value: 'test' },
   { label: 'pre', value: 'pre' },
+  { label: 'pre-txnj', value: 'pre-txnj' },
 ];
 
 export default function BuildControls({ app }: Props) {
@@ -47,7 +48,7 @@ export default function BuildControls({ app }: Props) {
         value={env}
         onChange={setEnv}
         options={ENV_OPTIONS}
-        style={{ width: 76 }}
+        style={{ width: 96 }}
       />
       <Button icon={<BuildOutlined />} loading={building} onClick={() => void handleBuild()}>
         构建

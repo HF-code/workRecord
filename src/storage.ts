@@ -1,57 +1,9 @@
 import type { Requirement } from './types';
+import { DEFAULT_DEVOPS_APPS, type DevopsApp } from './config/devopsApps';
 
 const REQ_KEY = 'work-tracker:requirements:v1';
-const PROJECT_KEY = 'work-tracker:projects:v1';
-
-/** 首次启动时的默认项目清单 */
-export const DEFAULT_PROJECTS: string[] = [
-  'admin-web',
-  'agent_app',
-  'agentadmin',
-  'audit-web',
-  'CustomerServiceSystem',
-  'cxw-web',
-  'data_admin',
-  'devopsmcpserver',
-  'education',
-  'erp_mobile',
-  'frontendworkflowskills',
-  'furniturelive',
-  'GroupChat',
-  'imliveweb',
-  'kuta_admin',
-  'kuta_mobile',
-  'livepage',
-  'live-web',
-  'marketing_admin',
-  'marketing_clinet',
-  'mengchu_com',
-  'newzanlivemobile',
-  'pay',
-  'sc_vazn_com',
-  'select_admin',
-  'select_com',
-  'select_miniapp',
-  'send_admin',
-  'shop_miniapp',
-  'shop_miniapp-worktrees',
-  'skills',
-  'store_admin',
-  'store_mobile',
-  'storeminiapp',
-  'supply_admin',
-  'supply_chain_admin',
-  'userlive',
-  'vzan_crx',
-  'vzanlive',
-  'vzanlivemobile',
-  'vzanlivemobile-e2e',
-  'vzui',
-  'weistream_admin',
-  'weistream_com',
-  'weistream_web',
-  'whbanyu_admin',
-];
+const DEVOPS_APPS_KEY = 'work-tracker:devops-apps:v1';
+const DEVOPS_SYNCED_AT_KEY = 'work-tracker:devops-apps:synced-at';
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -79,20 +31,24 @@ export function saveRequirements(list: Requirement[]): void {
   saveJson(REQ_KEY, list);
 }
 
-const SEED_KEY = 'work-tracker:projects:seeded:v1';
-
-export function loadProjects(): string[] {
-  const list = loadJson<string[]>(PROJECT_KEY, []);
-  // 只播种一次：老用户（已存过空清单）也会被补入默认项目；之后删光也不会再复活
-  if (localStorage.getItem(SEED_KEY) === null) {
-    localStorage.setItem(SEED_KEY, '1');
-    const merged = [...new Set([...DEFAULT_PROJECTS, ...list])];
-    saveJson(PROJECT_KEY, merged);
-    return merged;
-  }
-  return list;
+/** 读取运维平台应用配置，无本地存储时回退配置文件默认数据 */
+export function loadDevopsApps(): DevopsApp[] {
+  return loadJson<DevopsApp[]>(DEVOPS_APPS_KEY, DEFAULT_DEVOPS_APPS);
 }
 
-export function saveProjects(list: string[]): void {
-  saveJson(PROJECT_KEY, list);
+export function saveDevopsApps(list: DevopsApp[]): void {
+  saveJson(DEVOPS_APPS_KEY, list);
+}
+
+/** 最近一次同步成功时间（ISO 字符串），从未同步返回 null */
+export function loadDevopsSyncedAt(): string | null {
+  return localStorage.getItem(DEVOPS_SYNCED_AT_KEY);
+}
+
+export function saveDevopsSyncedAt(iso: string): void {
+  try {
+    localStorage.setItem(DEVOPS_SYNCED_AT_KEY, iso);
+  } catch {
+    // 静默处理
+  }
 }

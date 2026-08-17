@@ -89,4 +89,15 @@ app.get('/devops-api/deploy/branch', (request, reply) => {
   });
 });
 
+app.get('/devops-api/deploy/application', (request, reply) => {
+  const { group } = request.query as { group?: string };
+  const query = group ? `?group=${encodeURIComponent(group)}` : '';
+  return forwardToDevops({
+    method: 'GET',
+    upstreamUrl: `${DEVOPS_ORIGIN}/deploy/application${query}`,
+    request,
+    reply,
+  });
+});
+
 await app.listen({ port: PORT, host: '0.0.0.0' });

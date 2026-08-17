@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import { App as AntdApp, Button, Card, Space, Typography, Upload } from 'antd';
-import { BarChartOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import { BarChartOutlined, PlusOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
 import type { Requirement, Status } from './types';
 import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from './export';
-import { useProjects, useRequirements } from './hooks/useWorkTracker';
+import { useDevopsApps, useRequirements } from './hooks/useWorkTracker';
 import RequirementForm, { type RequirementFormValues } from './components/RequirementForm';
 import RequirementTable from './components/RequirementTable';
 import StatsBar from './components/StatsBar';
-import ProjectManager from './components/ProjectManager';
+import ProjectConfigPage from './components/ProjectConfigPage';
 import ProjectStatsModal from './components/ProjectStatsModal';
 import FilterBar, { type FilterValue } from './components/FilterBar';
 
@@ -21,11 +21,11 @@ const INITIAL_FILTER: FilterValue = {
 export default function App() {
   const { message, modal } = AntdApp.useApp();
   const { requirements, upsert, update, remove, removeMany, merge } = useRequirements();
-  const { projects, setProjects, add: addProject, merge: mergeProjects } = useProjects();
+  const devopsApps = useDevopsApps();
 
+  const [view, setView] = useState<'main' | 'config'>('main');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
-  const [projectMgrOpen, setProjectMgrOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
 
@@ -135,7 +135,6 @@ export default function App() {
         cancelText: '取消',
         onOk: () => {
           const fresh = merge(imported);
-          mergeProjects(fresh.flatMap((r) => r.items.map((it) => it.project)));
           message.success(`已导入 ${fresh.length} 条数据`);
         },
       });
@@ -143,6 +142,18 @@ export default function App() {
       message.error(`导入失败：${(e as Error).message}`);
     }
   };
+
+  if (view === 'config') {
+    return (
+      <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '24px 16px' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          <Card>
+            <ProjectConfigPage devopsApps={devopsApps} onBack={() => setView('main')} />
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '24px 16px' }}>
@@ -163,7 +174,9 @@ export default function App() {
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreateForm}>
                 登记需求
               </Button>
-              <Button onClick={() => setProjectMgrOpen(true)}>项目管理</Button>
+              <Button icon={<SettingOutlined />} onClick={() => setView('config')}>
+                项目配置
+              </Button>
               <Upload
                 accept=".json,application/json"
                 showUploadList={false}
@@ -207,7 +220,7 @@ export default function App() {
             value={filter}
             onChange={setFilter}
             statusOptions={statusOptions}
-            projectOptions={projects}
+            apps={devopsApps.apps}
           />
 
           <RequirementTable
@@ -223,17 +236,9 @@ export default function App() {
       <RequirementForm
         open={formOpen}
         editing={editing}
-        projects={projects}
-        onAddProject={addProject}
+        apps={devopsApps.apps}
         onCancel={closeForm}
         onSubmit={handleSubmit}
-      />
-
-      <ProjectManager
-        open={projectMgrOpen}
-        projects={projects}
-        onChange={setProjects}
-        onClose={() => setProjectMgrOpen(false)}
       />
 
       <ProjectStatsModal

@@ -3,6 +3,7 @@ import { Button, DatePicker, Form, Input, Modal, Select, Space } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { STATUSES, type Requirement, type Status } from '../types';
+import type { DevopsApp } from '../config/devopsApps';
 import ProjectSelect from './ProjectSelect';
 
 interface FormValues {
@@ -25,20 +26,12 @@ export interface RequirementFormValues {
 interface Props {
   open: boolean;
   editing: Requirement | null;
-  projects: string[];
-  onAddProject: (name: string) => void;
+  apps: DevopsApp[];
   onCancel: () => void;
   onSubmit: (values: RequirementFormValues) => void;
 }
 
-export default function RequirementForm({
-  open,
-  editing,
-  projects,
-  onAddProject,
-  onCancel,
-  onSubmit,
-}: Props) {
+export default function RequirementForm({ open, editing, apps, onCancel, onSubmit }: Props) {
   const [form] = Form.useForm<FormValues>();
 
   useEffect(() => {
@@ -135,7 +128,7 @@ export default function RequirementForm({
                     rules={[{ required: true, message: '请选择项目' }]}
                     style={{ width: 280, marginBottom: 0 }}
                   >
-                    <ProjectSelect projects={projects} onAddProject={onAddProject} />
+                    <ProjectSelect apps={apps} />
                   </Form.Item>
                   <Form.Item
                     name={[field.name, 'branch']}

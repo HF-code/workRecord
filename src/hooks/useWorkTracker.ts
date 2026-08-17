@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { Requirement } from '../types';
-import { loadProjects, loadRequirements, saveProjects, saveRequirements } from '../storage';
+import type { DevopsApp } from '../config/devopsApps';
+import {
+  loadDevopsApps,
+  loadDevopsSyncedAt,
+  loadRequirements,
+  saveDevopsApps,
+  saveDevopsSyncedAt,
+  saveRequirements,
+} from '../storage';
 import type { RequirementFormValues } from '../components/RequirementForm';
 
 export function useRequirements() {
@@ -59,21 +67,48 @@ export function useRequirements() {
   return { requirements, upsert, update, remove, removeMany, merge };
 }
 
-export function useProjects() {
-  const [projects, setProjects] = useState<string[]>(() => loadProjects());
+export function useDevopsApps() {
+  const [apps, setApps] = useState<DevopsApp[]>(() => loadDevopsApps());
+  const [syncedAt, setSyncedAt] = useState<string | null>(() => loadDevopsSyncedAt());
 
   useEffect(() => {
-    saveProjects(projects);
-  }, [projects]);
+    saveDevopsApps(apps);
+  }, [apps]);
 
-  const add = (name: string) => {
-    setProjects((list) => (list.includes(name) ? list : [...list, name]));
+  /** 新增项目，app 名重复返回 false */
+  const add = (app: DevopsApp): boolean => {
+    if (apps.some((a) => a.app === app.app)) return false;
+    setApps((list) => [...list, app]);
+    return true;
   };
 
-  /** 合并一批项目名（去重） */
-  const merge = (names: string[]) => {
-    setProjects((list) => [...new Set([...list, ...names])]);
+  const remove = (appName: string) => {
+    setApps((list) => list.filter((a) => a.app !== appName));
   };
 
-  return { projects, setProjects, add, merge };
+  const update = (appName: string, patch: Partial<DevopsApp>) => {
+    setApps((list) => list.map((a) => (a.app === appName ? { ...a, ...patch } : a)));
+  };
+
+  /**
+   * 同步合并：按 app 去重——远端新应用追加；两端都有保留本地 gitUrl、刷新 alias/group；
+   * 本地有而远端无的保留（可能是手动新增）。返回新增数量。
+   */
+  const mergeSynced = (remote: DevopsApp[]): number => {
+    const existing = new Map(apps.map((a) => [a.app, a]));
+    const fresh = remote.filter((a) => !existing.has(a.app));
+    setApps([
+      ...apps.map((local) => {
+        const r = remote.find((a) => a.app === local.app);
+        return r ? { ...local, alias: r.alias, group: r.group } : local;
+      }),
+      ...fresh,
+    ]);
+    const now = new Date().toISOString();
+    setSyncedAt(now);
+    saveDevopsSyncedAt(now);
+    return fresh.length;
+  };
+
+  return { apps, syncedAt, add, remove, update, mergeSynced };
 }
