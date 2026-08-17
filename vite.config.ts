@@ -5,6 +5,8 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   server: {
+    // 监听所有网卡，允许通过局域网 IP（如 192.168.x.x:5173）访问
+    host: true,
     proxy: {
       '/devops-api': {
         target: 'https://devops.vzan.com',
@@ -16,8 +18,9 @@ export default defineConfig({
           Origin: 'https://devops.vzan.com',
           Referer: 'https://devops.vzan.com/',
         },
-        // 响应 Set-Cookie 的 Domain 改写为 localhost，否则浏览器拒收
-        cookieDomainRewrite: { 'devops.vzan.com': 'localhost' },
+        // 置空表示去掉 Set-Cookie 的 Domain 属性，使其成为当前访问 host 的会话 cookie
+        // 这样 localhost 和局域网 IP 访问都能正常接收 cookie
+        cookieDomainRewrite: { 'devops.vzan.com': '' },
       },
     },
   },
