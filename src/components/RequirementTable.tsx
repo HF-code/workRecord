@@ -3,6 +3,7 @@ import { ExportOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import { STATUSES, STATUS_COLORS, type Requirement, type Status } from '../types';
+import BuildControls from './BuildControls';
 
 interface Props {
   data: Requirement[];
@@ -33,7 +34,7 @@ export default function RequirementTable({
     {
       title: '项目 / 分支',
       key: 'items',
-      width: 280,
+      width: 320,
       render: (_, record) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {record.items.map((it) => (
@@ -49,10 +50,12 @@ export default function RequirementTable({
                   wordBreak: 'break-all',
                   lineHeight: '18px',
                   marginTop: 2,
+                  marginBottom: 4,
                 }}
               >
                 {it.branch}
               </div>
+              <BuildControls app={it.project} />
             </div>
           ))}
         </div>
