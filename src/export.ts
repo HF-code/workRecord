@@ -56,7 +56,6 @@ function isValidItem(v: unknown): v is ProjectBranch {
   return (
     typeof it.id === 'string' &&
     typeof it.project === 'string' &&
-    it.project.trim() !== '' &&
     typeof it.branch === 'string' &&
     it.branch.trim() !== ''
   );
@@ -72,10 +71,10 @@ function isValidRequirement(v: unknown): v is Requirement {
     typeof r.tapdUrl === 'string' &&
     /^https?:\/\//.test(r.tapdUrl) &&
     Array.isArray(r.items) &&
-    r.items.length > 0 &&
     r.items.every(isValidItem) &&
     isValidStatus(r.status) &&
-    (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate)))
+    (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate))) &&
+    (r.remark === undefined || typeof r.remark === 'string')
   );
 }
 

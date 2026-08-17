@@ -25,6 +25,7 @@ export interface Requirement {
   items: ProjectBranch[];
   status: Status;
   releaseDate: string | null; // 'YYYY-MM-DD'
+  remark?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -26,9 +26,24 @@ export default function RequirementTable({
       dataIndex: 'name',
       key: 'name',
       render: (name: string, record) => (
-        <a href={record.tapdUrl} target="_blank" rel="noreferrer">
-          {name} <ExportOutlined style={{ fontSize: 12 }} />
-        </a>
+        <div>
+          <a href={record.tapdUrl} target="_blank" rel="noreferrer">
+            {name} <ExportOutlined style={{ fontSize: 12 }} />
+          </a>
+          {record.remark ? (
+            <div
+              style={{
+                fontSize: 12,
+                color: '#888',
+                marginTop: 2,
+                wordBreak: 'break-all',
+                lineHeight: '18px',
+              }}
+            >
+              {record.remark}
+            </div>
+          ) : null}
+        </div>
       ),
     },
     {

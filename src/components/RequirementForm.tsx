@@ -11,6 +11,7 @@ interface FormValues {
   status: Status;
   releaseDate?: dayjs.Dayjs | null;
   items: { id?: string; project: string; branch: string }[];
+  remark?: string;
 }
 
 /** 表单提交的值（releaseDate 已格式化为 'YYYY-MM-DD'） */
@@ -20,6 +21,7 @@ export interface RequirementFormValues {
   status: Status;
   releaseDate: string | null;
   items: { id?: string; project: string; branch: string }[];
+  remark?: string;
 }
 
 interface Props {
@@ -40,6 +42,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         status: editing.status,
         releaseDate: editing.releaseDate ? dayjs(editing.releaseDate) : null,
         items: editing.items.map((it) => ({ id: it.id, project: it.project, branch: it.branch })),
+        remark: editing.remark ?? '',
       }
     : {
         name: '',
@@ -47,6 +50,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         status: '开发中',
         releaseDate: null,
         items: [{ project: undefined as unknown as string, branch: '' }],
+        remark: '',
       };
 
   const handleOk = async () => {
@@ -61,6 +65,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         project: it.project,
         branch: it.branch.trim(),
       })),
+      remark: values.remark?.trim() || undefined,
     });
   };
 
@@ -102,17 +107,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
             <DatePicker allowClear style={{ width: '100%' }} placeholder="可留空" />
           </Form.Item>
         </Space>
-        <Form.List
-          name="items"
-          rules={[
-            {
-              validator: (_, items) =>
-                items && items.length > 0
-                  ? Promise.resolve()
-                  : Promise.reject(new Error('至少添加一条项目分支')),
-            },
-          ]}
-        >
+        <Form.List name="items">
           {(fields, { add, remove }, { errors }) => (
             <>
               <div style={{ marginBottom: 8, fontWeight: 500 }}>项目 / 分支</div>
@@ -120,7 +115,6 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
                 <Space key={field.key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
                   <Form.Item
                     name={[field.name, 'project']}
-                    rules={[{ required: true, message: '请选择项目' }]}
                     style={{ width: 280, marginBottom: 0 }}
                   >
                     <ProjectSelect apps={apps} />
@@ -147,6 +141,9 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
             </>
           )}
         </Form.List>
+        <Form.Item name="remark" label="备注">
+          <Input.TextArea rows={3} placeholder="选填，补充说明" maxLength={500} showCount />
+        </Form.Item>
       </Form>
     </Modal>
   );
