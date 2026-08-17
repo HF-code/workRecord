@@ -11,6 +11,18 @@ import {
 } from '../storage';
 import type { RequirementFormValues } from '../components/RequirementForm';
 
+/** 生成 UUID，兼容不支持 crypto.randomUUID 的环境（如 file:// 或非安全上下文） */
+function genId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function useRequirements() {
   const [requirements, setRequirements] = useState<Requirement[]>(() => loadRequirements());
 
@@ -27,7 +39,7 @@ export function useRequirements() {
   /** 新增或保存编辑，返回是否为编辑 */
   const upsert = (editingId: string | null, values: RequirementFormValues): boolean => {
     const items = values.items.map((it) => ({
-      id: it.id ?? crypto.randomUUID(),
+      id: it.id ?? genId(),
       project: it.project,
       branch: it.branch,
     }));
@@ -37,7 +49,7 @@ export function useRequirements() {
     }
     const now = new Date().toISOString();
     setRequirements((list) => [
-      { id: crypto.randomUUID(), ...values, items, createdAt: now, updatedAt: now },
+      { id: genId(), ...values, items, createdAt: now, updatedAt: now },
       ...list,
     ]);
     return false;

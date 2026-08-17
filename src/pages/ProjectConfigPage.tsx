@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   App as AntdApp,
   Button,
+  Card,
   Empty,
   Form,
   Input,
@@ -17,12 +19,9 @@ import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import { DEVOPS_GROUPS, type DevopsApp, type DevopsGroup } from '../config/devopsApps';
 import { fetchDevopsApps } from '../build';
-import type { useDevopsApps } from '../hooks/useWorkTracker';
+import { useDevopsApps } from '../hooks/useWorkTracker';
 
-interface Props {
-  devopsApps: ReturnType<typeof useDevopsApps>;
-  onBack: () => void;
-}
+interface Props {}
 
 const GROUP_COLORS: Record<DevopsGroup, string> = {
   JenkinsFrontweb: 'blue',
@@ -62,9 +61,10 @@ function GitUrlInput({ value, onSave }: { value?: string; onSave: (v: string) =>
   );
 }
 
-export default function ProjectConfigPage({ devopsApps, onBack }: Props) {
-  const { apps, syncedAt, add, remove, update, mergeSynced } = devopsApps;
+export default function ProjectConfigPage(_: Props) {
+  const { apps, syncedAt, add, remove, update, mergeSynced } = useDevopsApps();
   const { message } = AntdApp.useApp();
+  const navigate = useNavigate();
   const [syncing, setSyncing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [form] = Form.useForm<AddFormValues>();
@@ -157,7 +157,7 @@ export default function ProjectConfigPage({ devopsApps, onBack }: Props) {
   ];
 
   return (
-    <>
+    <Card>
       <div
         style={{
           display: 'flex',
@@ -167,7 +167,7 @@ export default function ProjectConfigPage({ devopsApps, onBack }: Props) {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack}>
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>
             返回
           </Button>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -209,7 +209,7 @@ export default function ProjectConfigPage({ devopsApps, onBack }: Props) {
         onCancel={() => setAddOpen(false)}
         okText="添加"
         cancelText="取消"
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" preserve={false} initialValues={{ group: 'JenkinsFrontweb' }}>
           <Form.Item name="group" label="分组" rules={[{ required: true, message: '请选择分组' }]}>
@@ -230,6 +230,6 @@ export default function ProjectConfigPage({ devopsApps, onBack }: Props) {
           </Form.Item>
         </Form>
       </Modal>
-    </>
+    </Card>
   );
 }

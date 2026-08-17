@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { App as AntdApp, Button, Card, Space, Typography, Upload } from 'antd';
 import { BarChartOutlined, PlusOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
-import type { Requirement, Status } from './types';
-import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from './export';
-import { useDevopsApps, useRequirements } from './hooks/useWorkTracker';
-import RequirementForm, { type RequirementFormValues } from './components/RequirementForm';
-import RequirementTable from './components/RequirementTable';
-import StatsBar from './components/StatsBar';
-import ProjectConfigPage from './components/ProjectConfigPage';
-import ProjectStatsModal from './components/ProjectStatsModal';
-import FilterBar, { type FilterValue } from './components/FilterBar';
+import type { Requirement, Status } from '../types';
+import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
+import { useDevopsApps, useRequirements } from '../hooks/useWorkTracker';
+import RequirementForm, { type RequirementFormValues } from '../components/RequirementForm';
+import RequirementTable from '../components/RequirementTable';
+import StatsBar from '../components/StatsBar';
+import ProjectStatsModal from '../components/ProjectStatsModal';
+import FilterBar, { type FilterValue } from '../components/FilterBar';
 
 const INITIAL_FILTER: FilterValue = {
   statuses: [],
@@ -18,12 +18,12 @@ const INITIAL_FILTER: FilterValue = {
   keyword: '',
 };
 
-export default function App() {
+export default function RequirementListPage() {
   const { message, modal } = AntdApp.useApp();
   const { requirements, upsert, update, remove, removeMany, merge } = useRequirements();
   const devopsApps = useDevopsApps();
+  const navigate = useNavigate();
 
-  const [view, setView] = useState<'main' | 'config'>('main');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
@@ -143,95 +143,79 @@ export default function App() {
     }
   };
 
-  if (view === 'config') {
-    return (
-      <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '24px 16px' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <Card>
-            <ProjectConfigPage devopsApps={devopsApps} onBack={() => setView('main')} />
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '24px 16px' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-        <Card>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 16,
+    <Card>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 16,
+        }}
+      >
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          工作记录
+        </Typography.Title>
+        <Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateForm}>
+            登记需求
+          </Button>
+          <Button icon={<SettingOutlined />} onClick={() => navigate('/projects')}>
+            项目配置
+          </Button>
+          <Upload
+            accept=".json,application/json"
+            showUploadList={false}
+            beforeUpload={(file) => {
+              void handleImportFile(file);
+              return false;
             }}
           >
-            <Typography.Title level={4} style={{ margin: 0 }}>
-              工作记录
-            </Typography.Title>
-            <Space>
-              <Button type="primary" icon={<PlusOutlined />} onClick={openCreateForm}>
-                登记需求
-              </Button>
-              <Button icon={<SettingOutlined />} onClick={() => setView('config')}>
-                项目配置
-              </Button>
-              <Upload
-                accept=".json,application/json"
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  void handleImportFile(file);
-                  return false;
-                }}
-              >
-                <Button icon={<UploadOutlined />}>导入数据</Button>
-              </Upload>
-              <Button onClick={handleExportAll}>导出全部</Button>
-              <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
-            </Space>
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'flex-start',
-              gap: 16,
-              marginBottom: 16,
-            }}
-          >
-            <StatsBar
-              requirements={requirements}
-              activeStatuses={filter.statuses}
-              onToggle={toggleStatusFilter}
-            />
-            <Button
-              type="text"
-              icon={<BarChartOutlined />}
-              onClick={() => setStatsOpen(true)}
-              style={{ flexShrink: 0, color: '#1677ff' }}
-            >
-              统计项目
-            </Button>
-          </div>
-
-          <FilterBar
-            value={filter}
-            onChange={setFilter}
-            statusOptions={statusOptions}
-            apps={devopsApps.apps}
-          />
-
-          <RequirementTable
-            data={filtered}
-            onEdit={openEditForm}
-            onDelete={handleDelete}
-            onChangeStatus={(id, status) => update(id, { status })}
-            onChangeReleaseDate={(id, releaseDate) => update(id, { releaseDate })}
-          />
-        </Card>
+            <Button icon={<UploadOutlined />}>导入数据</Button>
+          </Upload>
+          <Button onClick={handleExportAll}>导出全部</Button>
+          <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
+        </Space>
       </div>
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 16,
+          marginBottom: 16,
+        }}
+      >
+        <StatsBar
+          requirements={requirements}
+          activeStatuses={filter.statuses}
+          onToggle={toggleStatusFilter}
+        />
+        <Button
+          type="text"
+          icon={<BarChartOutlined />}
+          onClick={() => setStatsOpen(true)}
+          style={{ flexShrink: 0, color: '#1677ff' }}
+        >
+          统计项目
+        </Button>
+      </div>
+
+      <FilterBar
+        value={filter}
+        onChange={setFilter}
+        statusOptions={statusOptions}
+        apps={devopsApps.apps}
+      />
+
+      <RequirementTable
+        data={filtered}
+        onEdit={openEditForm}
+        onDelete={handleDelete}
+        onChangeStatus={(id, status) => update(id, { status })}
+        onChangeReleaseDate={(id, releaseDate) => update(id, { releaseDate })}
+      />
 
       <RequirementForm
         open={formOpen}
@@ -246,6 +230,6 @@ export default function App() {
         requirements={filtered}
         onClose={() => setStatsOpen(false)}
       />
-    </div>
+    </Card>
   );
 }

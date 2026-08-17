@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { Button, DatePicker, Form, Input, Modal, Select, Space } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -34,26 +33,21 @@ interface Props {
 export default function RequirementForm({ open, editing, apps, onCancel, onSubmit }: Props) {
   const [form] = Form.useForm<FormValues>();
 
-  useEffect(() => {
-    if (!open) return;
-    if (editing) {
-      form.setFieldsValue({
+  const initialValues: FormValues = editing
+    ? {
         name: editing.name,
         tapdUrl: editing.tapdUrl,
         status: editing.status,
         releaseDate: editing.releaseDate ? dayjs(editing.releaseDate) : null,
         items: editing.items.map((it) => ({ id: it.id, project: it.project, branch: it.branch })),
-      });
-    } else {
-      form.setFieldsValue({
+      }
+    : {
         name: '',
         tapdUrl: '',
         status: '开发中',
         releaseDate: null,
         items: [{ project: undefined as unknown as string, branch: '' }],
-      });
-    }
-  }, [open, editing, form]);
+      };
 
   const handleOk = async () => {
     const values = await form.validateFields();
@@ -72,6 +66,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
 
   return (
     <Modal
+      key={editing?.id ?? 'new'}
       title={editing ? '编辑需求' : '登记需求'}
       open={open}
       onOk={handleOk}
@@ -79,9 +74,9 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
       okText="保存"
       cancelText="取消"
       width={720}
-      destroyOnClose
+      destroyOnHidden
     >
-      <Form form={form} layout="vertical" preserve={false}>
+      <Form form={form} layout="vertical" preserve={false} initialValues={initialValues}>
         <Form.Item
           name="name"
           label="需求名称"
