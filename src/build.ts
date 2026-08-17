@@ -7,7 +7,7 @@
  */
 import { DEVOPS_GROUPS, type DevopsApp, type DevopsGroup } from './config/devopsApps';
 
-const API_BASE = '/devops-api';
+const API_BASE = '/api/devops-api';
 const BUILD_API = `${API_BASE}/deploy/build`;
 const BRANCH_API = `${API_BASE}/deploy/branch?app=live-h5-2`;
 const APPLICATION_API = `${API_BASE}/deploy/application`;
