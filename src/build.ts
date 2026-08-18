@@ -1,9 +1,8 @@
 /**
  * 运维平台构建请求，参考 vzan_crx 扩展 background.js 的直连实现。
- * 请求统一走相对路径 /api/devops-api：
+ * 请求统一走相对路径 /devops-api：
  * - 本地开发：Vite proxy 转发到 https://devops.vzan.com，浏览器 cookie 自动携带
- * - 远程部署：自带 Node 服务端（server/）接收 /api/devops-api/* 并剥离 /api 前缀后转发
- *   上游，即实际访问 https://devops.vzan.com/deploy/*
+ * - 远程部署：自带 Node 服务端（server/）转发，入站 Cookie 头透传给上游
  * 登录 cookie 由用户自行通过其他工具写入当前站点域名，应用只从 document.cookie 读取。
  */
 import { DEVOPS_GROUPS, type DevopsApp, type DevopsGroup } from './config/devopsApps';

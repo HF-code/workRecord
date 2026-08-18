@@ -69,9 +69,7 @@ async function forwardToDevops({ method, upstreamUrl, request, reply }: ForwardO
   }
 }
 
-// 前端请求基址为 /api/devops-api/*，服务端挂此前缀；转发时剥离 /api 前缀，
-// 使上游实际访问 https://devops.vzan.com/deploy/*（而非 /api/deploy/*）
-app.post('/api/devops-api/deploy/build', (request, reply) =>
+app.post('/devops-api/deploy/build', (request, reply) =>
   forwardToDevops({
     method: 'POST',
     upstreamUrl: `${DEVOPS_ORIGIN}/deploy/build`,
@@ -80,7 +78,7 @@ app.post('/api/devops-api/deploy/build', (request, reply) =>
   }),
 );
 
-app.get('/api/devops-api/deploy/branch', (request, reply) => {
+app.get('/devops-api/deploy/branch', (request, reply) => {
   const { app: appName } = request.query as { app?: string };
   const query = appName ? `?app=${encodeURIComponent(appName)}` : '';
   return forwardToDevops({
@@ -91,7 +89,7 @@ app.get('/api/devops-api/deploy/branch', (request, reply) => {
   });
 });
 
-app.get('/api/devops-api/deploy/application', (request, reply) => {
+app.get('/devops-api/deploy/application', (request, reply) => {
   const { group } = request.query as { group?: string };
   const query = group ? `?group=${encodeURIComponent(group)}` : '';
   return forwardToDevops({
