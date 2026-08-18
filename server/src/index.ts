@@ -100,11 +100,4 @@ app.get('/devops-api/deploy/application', (request, reply) => {
   });
 });
 
-// 健康检查：访问 /hello 能返回内容，即证明服务进程存活且加载了最新产物
-app.get('/hello', async (_request, reply) => {
-  return reply
-    .header('content-type', 'text/plain; charset=utf-8')
-    .send(`hello world @ ${new Date().toISOString()}`);
-});
-
 await app.listen({ port: PORT, host: '0.0.0.0' });
