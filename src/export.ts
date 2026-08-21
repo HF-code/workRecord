@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { STATUSES, type ProjectBranch, type Requirement, type Status } from './types';
+import { STATUSES, VERSIONS, type ProjectBranch, type Requirement, type Status } from './types';
 
 export interface ExportPayload {
   version: 1;
@@ -74,7 +74,8 @@ function isValidRequirement(v: unknown): v is Requirement {
     r.items.every(isValidItem) &&
     isValidStatus(r.status) &&
     (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate))) &&
-    (r.remark === undefined || typeof r.remark === 'string')
+    (r.remark === undefined || typeof r.remark === 'string') &&
+    (r.version === undefined || (typeof r.version === 'string' && (VERSIONS as readonly string[]).includes(r.version)))
   );
 }
 

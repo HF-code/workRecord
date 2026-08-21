@@ -3,10 +3,12 @@ import { ExportOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import { STATUSES, STATUS_COLORS, type Requirement, type Status } from '../types';
+import type { DevopsApp } from '../config/devopsApps';
 import BuildControls from './BuildControls';
 
 interface Props {
   data: Requirement[];
+  apps: DevopsApp[];
   onEdit: (req: Requirement) => void;
   onDelete: (id: string) => void;
   onChangeStatus: (id: string, status: Status) => void;
@@ -15,6 +17,7 @@ interface Props {
 
 export default function RequirementTable({
   data,
+  apps,
   onEdit,
   onDelete,
   onChangeStatus,
@@ -30,6 +33,12 @@ export default function RequirementTable({
           <a href={record.tapdUrl} target="_blank" rel="noreferrer">
             {name} <ExportOutlined style={{ fontSize: 12 }} />
           </a>
+          <Tag
+            color={record.version === '独立' ? 'purple' : 'geekblue'}
+            style={{ marginLeft: 6, fontSize: 12, lineHeight: '18px' }}
+          >
+            {record.version ?? '大版'}
+          </Tag>
           {record.remark ? (
             <div
               style={{
@@ -70,7 +79,11 @@ export default function RequirementTable({
               >
                 {it.branch}
               </div>
-              <BuildControls app={it.project} />
+              <BuildControls
+                app={it.project}
+                gitUrl={apps.find((a) => a.app === it.project)?.gitUrl}
+                branch={it.branch}
+              />
             </div>
           ))}
         </div>

@@ -1,7 +1,7 @@
 import { Button, DatePicker, Form, Input, Modal, Select, Space } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { STATUSES, type Requirement, type Status } from '../types';
+import { STATUSES, VERSIONS, type Requirement, type Status, type Version } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import ProjectSelect from './ProjectSelect';
 
@@ -10,6 +10,7 @@ interface FormValues {
   tapdUrl: string;
   status: Status;
   releaseDate?: dayjs.Dayjs | null;
+  version: Version;
   items: { id?: string; project: string; branch: string }[];
   remark?: string;
 }
@@ -20,6 +21,7 @@ export interface RequirementFormValues {
   tapdUrl: string;
   status: Status;
   releaseDate: string | null;
+  version: Version;
   items: { id?: string; project: string; branch: string }[];
   remark?: string;
 }
@@ -41,6 +43,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         tapdUrl: editing.tapdUrl,
         status: editing.status,
         releaseDate: editing.releaseDate ? dayjs(editing.releaseDate) : null,
+        version: editing.version ?? '大版',
         items: editing.items.map((it) => ({ id: it.id, project: it.project, branch: it.branch })),
         remark: editing.remark ?? '',
       }
@@ -49,6 +52,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         tapdUrl: '',
         status: '开发中',
         releaseDate: null,
+        version: '大版',
         items: [{ project: undefined as unknown as string, branch: '' }],
         remark: '',
       };
@@ -60,6 +64,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
       tapdUrl: values.tapdUrl.trim(),
       status: values.status,
       releaseDate: values.releaseDate ? values.releaseDate.format('YYYY-MM-DD') : null,
+      version: values.version,
       items: values.items.map((it) => ({
         id: it.id,
         project: it.project,
@@ -105,6 +110,9 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
           </Form.Item>
           <Form.Item name="releaseDate" label="发版时间" style={{ width: 200 }}>
             <DatePicker allowClear style={{ width: '100%' }} placeholder="可留空" />
+          </Form.Item>
+          <Form.Item name="version" label="版本" rules={[{ required: true }]} style={{ width: 140 }}>
+            <Select options={VERSIONS.map((v) => ({ label: v, value: v }))} />
           </Form.Item>
         </Space>
         <Form.List name="items">

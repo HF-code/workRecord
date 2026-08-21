@@ -211,6 +211,7 @@ export default function RequirementListPage() {
 
       <RequirementTable
         data={filtered}
+        apps={devopsApps.apps}
         onEdit={openEditForm}
         onDelete={handleDelete}
         onChangeStatus={(id, status) => update(id, { status })}

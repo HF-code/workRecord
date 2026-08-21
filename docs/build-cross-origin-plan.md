@@ -14,7 +14,7 @@
 | 场景 | 通路 | cookie 来源 |
 | --- | --- | --- |
 | 本地开发 | Vite `server.proxy`：`/devops-api/*` → `https://devops.vzan.com`（changeOrigin + cookieDomainRewrite） | 浏览器 cookie 自动携带（首次需通过代理登录一次） |
-| 远程部署 | 自带 Node 服务端（`server/`，Fastify）：托管 `dist/` 静态文件 + 反代 `/devops-api/*` | 用户通过其他工具写入本站域名的 cookie，浏览器同源自动携带，服务端透传 |
+| 远程部署 | 独立 Node 服务项目（`mywork-server/`，Koa2）：托管 `mywork/dist/` 静态文件 + 反代 `/devops-api/*` | 用户通过其他工具写入本站域名的 cookie，浏览器同源自动携带，服务端透传 |
 
 **统一约定**：前端所有运维平台请求固定走相对路径 `/devops-api/*`，本地由 Vite 代理终结、远程由 Node 服务终结，前端代码零环境分支。
 
@@ -45,18 +45,20 @@ server: {
 
 ---
 
-## 3. 远程部署：Node 服务端（server/）
+## 3. 远程部署：独立 Node 服务（mywork-server/）
+
+> 2026-08-20 起服务端从 `mywork/server/` 迁出为独立项目 `d:\工作\创意\mywork-server`，框架由 Fastify 改为 **Koa2**。
 
 ### 3.1 选型
 
-**Fastify 5 + TypeScript + @fastify/static**：
-- 轻量高性能，ESM 友好（与主项目 `type: module` 一致）
-- 静态托管、路由均为官方插件；转发用 Node 18+ 全局 `fetch`，无需 http-proxy 类依赖
-- 对比 Express 需额外引 `http-proxy-middleware`；NestJS 对 2 个转发端点过重
+**Koa2 + TypeScript + @koa/router + koa-static + koa-bodyparser**：
+- 轻量中间件模型，ESM 友好（`type: module`）
+- 转发用 Node 18+ 全局 `fetch`，与框架解耦，无需 http-proxy 类依赖
+- 对比 Express 需额外引 `http-proxy-middleware`；NestJS 对几个转发端点过重
 
 ### 3.2 职责
 
-1. `@fastify/static` 托管前端构建产物 `dist/`（目录不存在时容错，仅提供 API）
+1. `koa-static` 托管前端构建产物（`WEB_DIST_DIR` 环境变量优先，默认兄弟目录 `mywork/dist`；目录不存在时容错，仅提供 API）
 2. 反代两个端点：
    - `POST /devops-api/deploy/build` → `POST https://devops.vzan.com/deploy/build`
    - `GET /devops-api/deploy/branch?app=xxx` → `GET https://devops.vzan.com/deploy/branch?app=xxx`
@@ -77,9 +79,13 @@ server: {
 ### 3.4 部署步骤
 
 ```bash
-npm run build            # 产出 dist/
-cd server && npm install && npm run build
-npm start                # 或 node dist/index.js，默认 :8080
+# 前端（mywork/）
+npm run build                              # 产出 mywork/dist/
+
+# 服务端（独立项目 mywork-server/）
+cd ../mywork-server && npm install && npm run build
+npm start                                  # 或 node dist/index.js，默认 :8080
+# 前端产物路径非默认位置时：WEB_DIST_DIR=/path/to/dist npm start
 ```
 
 ---
@@ -91,9 +97,9 @@ npm start                # 或 node dist/index.js，默认 :8080
 | `vite.config.ts` | 修改 | 增加 `server.proxy` |
 | `src/build.ts` | 修改 | API 改相对路径 `/devops-api`；`getCsrfToken()` 仅从 `document.cookie` 解析 |
 | `src/components/BuildModal.tsx` | 修改 | 构建弹窗（无 cookie 录入 UI，csrftoken 无值时提示未登录） |
-| `server/package.json` | 新增 | fastify、@fastify/static；tsx、typescript、@types/node；scripts: dev/build/start |
-| `server/tsconfig.json` | 新增 | NodeNext ESM、strict |
-| `server/src/index.ts` | 新增 | Fastify 实例 + 静态托管 + 两个转发路由 |
+| `mywork-server/package.json` | 新增（独立项目） | koa、@koa/router、koa-static、koa-bodyparser 及对应 @types；tsx、typescript、@types/node；scripts: dev/build/start |
+| `mywork-server/tsconfig.json` | 新增（独立项目） | NodeNext ESM、strict |
+| `mywork-server/src/index.ts` | 新增（独立项目） | Koa2 实例 + 静态托管 + 转发路由（/deploy/build、/deploy/branch、/deploy/application）；WEB_DIST_DIR 环境变量可配前端产物目录 |
 | `docs/build-cross-origin-plan.md` | 修改 | 本文档 |
 
 ---
@@ -104,7 +110,7 @@ npm start                # 或 node dist/index.js，默认 :8080
 - [ ] 构建弹窗点"开始构建"：不再提示"未登录"，返回 200 提示成功
 - [ ] 清空 cookie 后再点：提示"未登录"或 401/403 提示登录态失效
 - [ ] `live-h5-2` 项目各环境分支解析正常
-- [ ] `npm run build` + `server/` 启动后，向本站域名写入 cookie 可正常构建（远程通路）
+- [ ] `npm run build` + `mywork-server/` 启动后，向本站域名写入 cookie 可正常构建（远程通路）
 
 ---
 
@@ -114,3 +120,4 @@ npm start                # 或 node dist/index.js，默认 :8080
 - 2026-08-17：用户确认不会部署到 devops.vzan.com，远程方案改为**自带 Node 服务端转发**（Fastify），登录态改为**用户粘贴 cookie**；扩展桥接方案废弃。
 - 2026-08-17（二）：取消应用内 cookie 粘贴 UI 与 localStorage / `x-devops-cookie` 方案；改为用户自行通过其他工具把 cookie 写入本站域名，前端只读 `document.cookie`，服务端透传入站 `Cookie` 头。
 - 2026-08-17（三）：修复本地 `CSRF Failed: Origin checking failed` —— 浏览器 POST 自动带 `Origin: http://localhost:5173`，`changeOrigin` 只改 `Host` 不改 `Origin`；在 Vite 代理加 `headers: { Origin, Referer }` 改写为 devops 域（Postman 不带 Origin 故直连可通）。
+- 2026-08-20：服务端从 `mywork/server/` 迁出为独立项目 `mywork-server/`，框架 Fastify → Koa2；前端产物目录改为 `WEB_DIST_DIR` 环境变量可配（默认 `../mywork/dist`）；原 `mywork/server/` 目录删除。

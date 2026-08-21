@@ -1,11 +1,30 @@
 import { useState } from 'react';
 import { App as AntdApp, Button, Select, Space } from 'antd';
-import { BuildOutlined } from '@ant-design/icons';
+import { BuildOutlined, MergeOutlined } from '@ant-design/icons';
 import { getCsrfToken, requestBuild, type BuildEnv } from '../build';
 
 interface Props {
   /** 项目名（构建 payload 的 app 字段） */
   app: string;
+  /** Git 仓库地址（项目配置页填写），用于拼接 MR 链接 */
+  gitUrl?: string;
+  /** 源分支（需求登记的开发分支） */
+  branch?: string;
+}
+
+/** MR 目标分支 */
+const MR_TARGET_BRANCH = 'master';
+
+/** 将 git 仓库地址（scp 或 http 形式）转为 GitLab 预填 MR 链接 */
+export function buildMergeRequestUrl(gitUrl: string, branch: string): string {
+  let web = gitUrl.trim().replace(/\.git$/, '');
+  const scp = web.match(/^git@([^:]+):(.+)$/);
+  if (scp) web = `https://${scp[1]}/${scp[2]}`;
+  const params = new URLSearchParams({
+    'merge_request[source_branch]': branch,
+    'merge_request[target_branch]': MR_TARGET_BRANCH,
+  });
+  return `${web}/-/merge_requests/new?${params.toString()}`;
 }
 
 const ENV_OPTIONS: { label: string; value: BuildEnv }[] = [
@@ -15,7 +34,7 @@ const ENV_OPTIONS: { label: string; value: BuildEnv }[] = [
   { label: 'pre-txnj', value: 'pre-txnj' },
 ];
 
-export default function BuildControls({ app }: Props) {
+export default function BuildControls({ app, gitUrl, branch }: Props) {
   const { message } = AntdApp.useApp();
   const [env, setEnv] = useState<BuildEnv>('test');
   const [building, setBuilding] = useState(false);
@@ -42,6 +61,18 @@ export default function BuildControls({ app }: Props) {
     }
   };
 
+  const handleOpenMr = () => {
+    if (!gitUrl) {
+      message.warning(`【${app}】未配置 Git 仓库地址，请先在「项目配置」页填写`);
+      return;
+    }
+    if (!branch) {
+      message.warning('该需求未填写开发分支，无法生成 MR 链接');
+      return;
+    }
+    window.open(buildMergeRequestUrl(gitUrl, branch), '_blank', 'noreferrer');
+  };
+
   return (
     <Space.Compact size="small">
       <Select
@@ -52,6 +83,9 @@ export default function BuildControls({ app }: Props) {
       />
       <Button icon={<BuildOutlined />} loading={building} onClick={() => void handleBuild()}>
         构建
+      </Button>
+      <Button icon={<MergeOutlined />} onClick={handleOpenMr}>
+        提交MR
       </Button>
     </Space.Compact>
   );

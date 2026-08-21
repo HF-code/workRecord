@@ -12,6 +12,10 @@ export const STATUSES = [
 
 export type Status = (typeof STATUSES)[number];
 
+export const VERSIONS = ['大版', '独立'] as const;
+
+export type Version = (typeof VERSIONS)[number];
+
 export interface ProjectBranch {
   id: string;
   project: string;
@@ -25,6 +29,7 @@ export interface Requirement {
   items: ProjectBranch[];
   status: Status;
   releaseDate: string | null; // 'YYYY-MM-DD'
+  version?: Version; // 旧数据可能无此字段，缺省视为 '大版'
   remark?: string;
   createdAt: string;
   updatedAt: string;
