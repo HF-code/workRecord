@@ -14,7 +14,7 @@ import FilterBar, { type FilterValue } from '../components/FilterBar';
 const INITIAL_FILTER: FilterValue = {
   statuses: [],
   project: undefined,
-  releaseDate: null,
+  releaseDateRange: null,
   keyword: '',
 };
 
@@ -34,7 +34,14 @@ export default function RequirementListPage() {
     return requirements.filter((r) => {
       if (filter.statuses.length > 0 && !filter.statuses.includes(r.status)) return false;
       if (filter.project && !r.items.some((it) => it.project === filter.project)) return false;
-      if (filter.releaseDate && r.releaseDate !== filter.releaseDate) return false;
+      if (
+        filter.releaseDateRange &&
+        (r.releaseDate === null ||
+          r.releaseDate < filter.releaseDateRange[0] ||
+          r.releaseDate > filter.releaseDateRange[1])
+      ) {
+        return false;
+      }
       if (kw && !r.name.toLowerCase().includes(kw)) return false;
       return true;
     });

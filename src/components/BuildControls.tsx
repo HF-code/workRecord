@@ -12,17 +12,17 @@ interface Props {
   branch?: string;
 }
 
-/** MR 目标分支 */
-const MR_TARGET_BRANCH = 'master';
-
-/** 将 git 仓库地址（scp 或 http 形式）转为 GitLab 预填 MR 链接 */
-export function buildMergeRequestUrl(gitUrl: string, branch: string): string {
+/** 将 git 仓库地址（scp 或 http 形式）转为 GitLab 预填 MR 链接
+ * @param branch 源分支（需求登记的开发分支）
+ * @param targetBranch 目标分支（构建环境下拉所选，默认 master）
+ */
+export function buildMergeRequestUrl(gitUrl: string, branch: string, targetBranch = 'master'): string {
   let web = gitUrl.trim().replace(/\.git$/, '');
   const scp = web.match(/^git@([^:]+):(.+)$/);
   if (scp) web = `https://${scp[1]}/${scp[2]}`;
   const params = new URLSearchParams({
     'merge_request[source_branch]': branch,
-    'merge_request[target_branch]': MR_TARGET_BRANCH,
+    'merge_request[target_branch]': targetBranch,
   });
   return `${web}/-/merge_requests/new?${params.toString()}`;
 }
@@ -70,7 +70,7 @@ export default function BuildControls({ app, gitUrl, branch }: Props) {
       message.warning('该需求未填写开发分支，无法生成 MR 链接');
       return;
     }
-    window.open(buildMergeRequestUrl(gitUrl, branch), '_blank', 'noreferrer');
+    window.open(buildMergeRequestUrl(gitUrl, branch, env), '_blank', 'noreferrer');
   };
 
   return (
