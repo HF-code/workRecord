@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import {
   App as AntdApp,
   Button,
@@ -62,7 +62,23 @@ export default function ProjectConfigPage() {
   const { message } = AntdApp.useApp();
   const [syncing, setSyncing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [keyword, setKeyword] = useState('');
   const [form] = Form.useForm<AddFormValues>();
+
+  // 按项目名 / 别名 / Git 地址模糊过滤
+  const filteredApps = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return apps;
+    return apps.filter((a) => {
+      const alias = (a.alias ?? '').toLowerCase();
+      const gitUrl = (a.gitUrl ?? '').toLowerCase();
+      return (
+        a.app.toLowerCase().includes(kw) ||
+        alias.includes(kw) ||
+        gitUrl.includes(kw)
+      );
+    });
+  }, [apps, keyword]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -166,6 +182,14 @@ export default function ProjectConfigPage() {
           {syncedAt ? dayjs(syncedAt).format('YYYY-MM-DD HH:mm') : '从未同步'}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <Input.Search
+            allowClear
+            placeholder="搜索项目名 / 别名 / Git 地址"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            style={{ width: 280 }}
+            data-testid="project-config-search-input"
+          />
           <Button type="dashed" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
             新增项目
           </Button>
@@ -180,7 +204,8 @@ export default function ProjectConfigPage() {
         </div>
       </div>
       <div style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
-        共 {apps.length} 个项目 · 最近同步：
+        共 {apps.length} 个项目
+        {keyword.trim() && `（匹配 ${filteredApps.length} 个）`} · 最近同步：
         {syncedAt ? dayjs(syncedAt).format('YYYY-MM-DD HH:mm') : '从未同步'}
       </div>
       <Table<DevopsApp>
@@ -188,9 +213,15 @@ export default function ProjectConfigPage() {
         bordered
         size="middle"
         columns={columns}
-        dataSource={apps}
+        dataSource={filteredApps}
         pagination={{ pageSize: 20, showSizeChanger: false, hideOnSinglePage: true }}
-        locale={{ emptyText: <Empty description="暂无项目，点击右上角「一键同步」拉取" /> }}
+        locale={{
+          emptyText: (
+            <Empty
+              description={keyword.trim() ? '没有匹配的项目' : '暂无项目，点击右上角「一键同步」拉取'}
+            />
+          ),
+        }}
       />
 
       <Modal

@@ -2,11 +2,13 @@ import type { Requirement } from './types';
 import type { BuildEnv } from './build';
 import { DEFAULT_DEVOPS_APPS, type DevopsApp } from './config/devopsApps';
 import { DEFAULT_BRANCHES, type BranchConfig } from './config/branches';
+import { normalizePollInterval } from './config/buildConfig';
 
 const REQ_KEY = 'work-tracker:requirements:v1';
 const DEVOPS_APPS_KEY = 'work-tracker:devops-apps:v1';
 const DEVOPS_SYNCED_AT_KEY = 'work-tracker:devops-apps:synced-at';
 const BRANCHES_KEY = 'work-tracker:branches:v1';
+const BUILD_POLL_INTERVAL_KEY = 'work-tracker:build-poll-interval:v1';
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -63,6 +65,20 @@ export function loadBranches(): BranchConfig[] {
 
 export function saveBranches(list: BranchConfig[]): void {
   saveJson(BRANCHES_KEY, list);
+}
+
+/** 读取构建轮询间隔（秒），缺失或非法时回退默认配置 */
+export function loadBuildPollInterval(): number {
+  const raw = localStorage.getItem(BUILD_POLL_INTERVAL_KEY);
+  return normalizePollInterval(raw ? Number(raw) : NaN);
+}
+
+export function saveBuildPollInterval(seconds: number): void {
+  try {
+    localStorage.setItem(BUILD_POLL_INTERVAL_KEY, String(normalizePollInterval(seconds)));
+  } catch {
+    // 静默处理
+  }
 }
 
 /** 一次性迁移：将旧版本独立存储的构建目标分支 / 勾选项并回 requirements（同表），并清理旧 key */
