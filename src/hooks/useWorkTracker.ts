@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import type { Requirement } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import type { BranchConfig } from '../config/branches';
+import type { BuildEnv } from '../build';
 import {
   loadBranches,
   loadDevopsApps,
   loadDevopsSyncedAt,
   loadRequirements,
+  migrateLegacyBuildPlan,
   saveBranches,
   saveDevopsApps,
   saveDevopsSyncedAt,
@@ -27,7 +29,10 @@ function genId(): string {
 }
 
 export function useRequirements() {
-  const [requirements, setRequirements] = useState<Requirement[]>(() => loadRequirements());
+  const [requirements, setRequirements] = useState<Requirement[]>(() => {
+    migrateLegacyBuildPlan();
+    return loadRequirements();
+  });
 
   useEffect(() => {
     saveRequirements(requirements);
@@ -47,7 +52,8 @@ export function useRequirements() {
       branch: it.branch,
     }));
     if (editingId) {
-      update(editingId, { ...values, items });
+      const existing = requirements.find((r) => r.id === editingId);
+      update(editingId, { ...values, items, buildEnv: existing?.buildEnv, buildItems: existing?.buildItems });
       return true;
     }
     const now = new Date().toISOString();
@@ -146,4 +152,39 @@ export function useBranches() {
   };
 
   return { branches, save, reset };
+}
+
+/** 构建计划：复用每条需求上的 buildEnv / buildItems 字段（与需求列表同表存储） */
+export function useBuildPlan(update: (id: string, patch: Partial<Requirement>) => void, defaultBranch: BuildEnv) {
+  /** 取某需求的目标分支（整需求共用），缺省为全局默认分支 */
+  const getEnv = (req: Requirement): BuildEnv => {
+    return req.buildEnv ?? defaultBranch;
+  };
+
+  const setEnv = (req: Requirement, env: BuildEnv) => {
+    update(req.id, { buildEnv: env });
+  };
+
+  /** 取某需求勾选的项目 itemId 集合；未记录过（undefined）视为全选 */
+  const getSelected = (req: Requirement): Set<string> => {
+    if (req.buildItems === undefined) return new Set(req.items.map((it) => it.id));
+    return new Set(req.buildItems);
+  };
+
+  const setSelectedFor = (req: Requirement, itemIds: string[]) => {
+    update(req.id, { buildItems: itemIds });
+  };
+
+  const toggleItem = (req: Requirement, itemId: string, checked: boolean) => {
+    const cur = getSelected(req);
+    if (checked) cur.add(itemId);
+    else cur.delete(itemId);
+    setSelectedFor(req, [...cur]);
+  };
+
+  const toggleAll = (req: Requirement, checked: boolean) => {
+    setSelectedFor(req, checked ? req.items.map((it) => it.id) : []);
+  };
+
+  return { getEnv, setEnv, getSelected, toggleItem, toggleAll };
 }

@@ -1,3 +1,5 @@
+import type { BuildEnv } from './build';
+
 export const STATUSES = [
   '开发中',
   '已提测',
@@ -31,6 +33,10 @@ export interface Requirement {
   releaseDate: string | null; // 'YYYY-MM-DD'
   version?: Version; // 旧数据可能无此字段，缺省视为 '大版'
   remark?: string;
+  /** 构建目标分支（整需求共用），缺省视为系统配置默认分支 */
+  buildEnv?: BuildEnv;
+  /** 参与构建的项目 itemId 列表，缺省视为全部项目 */
+  buildItems?: string[];
   createdAt: string;
   updatedAt: string;
 }

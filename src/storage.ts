@@ -1,4 +1,5 @@
 import type { Requirement } from './types';
+import type { BuildEnv } from './build';
 import { DEFAULT_DEVOPS_APPS, type DevopsApp } from './config/devopsApps';
 import { DEFAULT_BRANCHES, type BranchConfig } from './config/branches';
 
@@ -62,4 +63,28 @@ export function loadBranches(): BranchConfig[] {
 
 export function saveBranches(list: BranchConfig[]): void {
   saveJson(BRANCHES_KEY, list);
+}
+
+/** 一次性迁移：将旧版本独立存储的构建目标分支 / 勾选项并回 requirements（同表），并清理旧 key */
+export function migrateLegacyBuildPlan(): void {
+  const LEGACY_ENVS_KEY = 'work-tracker:build-envs:v1';
+  const LEGACY_SELECTED_KEY = 'work-tracker:build-selected:v1';
+  try {
+    const rawEnvs = localStorage.getItem(LEGACY_ENVS_KEY);
+    const rawSelected = localStorage.getItem(LEGACY_SELECTED_KEY);
+    if (!rawEnvs && !rawSelected) return;
+    const envs = rawEnvs ? (JSON.parse(rawEnvs) as Record<string, string>) : {};
+    const selected = rawSelected ? (JSON.parse(rawSelected) as Record<string, string[]>) : {};
+    const list = loadRequirements();
+    const next = list.map((r) => ({
+      ...r,
+      buildEnv: (envs[r.id] as BuildEnv | undefined) ?? r.buildEnv,
+      buildItems: selected[r.id] ?? r.buildItems,
+    }));
+    saveRequirements(next);
+    localStorage.removeItem(LEGACY_ENVS_KEY);
+    localStorage.removeItem(LEGACY_SELECTED_KEY);
+  } catch {
+    // 迁移失败不影响主流程
+  }
 }

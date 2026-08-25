@@ -14,6 +14,21 @@ const APPLICATION_API = `${API_BASE}/deploy/application`;
 
 export type BuildEnv = 'dev' | 'test' | 'pre' | 'pre-txnj' | 'preb-txnj';
 
+/** 将 git 仓库地址（scp 或 http 形式）转为 GitLab 预填 MR 链接
+ * @param branch 源分支（需求登记的开发分支）
+ * @param targetBranch 目标分支（构建目标分支，默认 master）
+ */
+export function buildMergeRequestUrl(gitUrl: string, branch: string, targetBranch = 'master'): string {
+  let web = gitUrl.trim().replace(/\.git$/, '');
+  const scp = web.match(/^git@([^:]+):(.+)$/);
+  if (scp) web = `https://${scp[1]}/${scp[2]}`;
+  const params = new URLSearchParams({
+    'merge_request[source_branch]': branch,
+    'merge_request[target_branch]': targetBranch,
+  });
+  return `${web}/-/merge_requests/new?${params.toString()}`;
+}
+
 export interface BuildParams {
   app: string;
   env: BuildEnv;

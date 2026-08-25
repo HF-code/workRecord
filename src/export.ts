@@ -64,6 +64,12 @@ function isValidItem(v: unknown): v is ProjectBranch {
 function isValidRequirement(v: unknown): v is Requirement {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
+  const validBuildEnv =
+    r.buildEnv === undefined ||
+    (typeof r.buildEnv === 'string' && ['dev', 'test', 'pre', 'pre-txnj', 'preb-txnj'].includes(r.buildEnv));
+  const validBuildItems =
+    r.buildItems === undefined ||
+    (Array.isArray(r.buildItems) && r.buildItems.every((x) => typeof x === 'string'));
   return (
     typeof r.id === 'string' &&
     typeof r.name === 'string' &&
@@ -75,7 +81,9 @@ function isValidRequirement(v: unknown): v is Requirement {
     isValidStatus(r.status) &&
     (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate))) &&
     (r.remark === undefined || typeof r.remark === 'string') &&
-    (r.version === undefined || (typeof r.version === 'string' && (VERSIONS as readonly string[]).includes(r.version)))
+    (r.version === undefined || (typeof r.version === 'string' && (VERSIONS as readonly string[]).includes(r.version))) &&
+    validBuildEnv &&
+    validBuildItems
   );
 }
 
