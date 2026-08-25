@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { Requirement } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
+import type { BranchConfig } from '../config/branches';
 import {
+  loadBranches,
   loadDevopsApps,
   loadDevopsSyncedAt,
   loadRequirements,
+  saveBranches,
   saveDevopsApps,
   saveDevopsSyncedAt,
   saveRequirements,
@@ -123,4 +126,24 @@ export function useDevopsApps() {
   };
 
   return { apps, syncedAt, add, remove, update, mergeSynced };
+}
+
+export function useBranches() {
+  const [branches, setBranches] = useState<BranchConfig[]>(() => loadBranches());
+
+  useEffect(() => {
+    saveBranches(branches);
+  }, [branches]);
+
+  /** 保存整个分支列表（用于配置页的增删改与排序） */
+  const save = (list: BranchConfig[]) => {
+    setBranches(list);
+  };
+
+  /** 恢复默认数据 */
+  const reset = () => {
+    setBranches(loadBranches());
+  };
+
+  return { branches, save, reset };
 }

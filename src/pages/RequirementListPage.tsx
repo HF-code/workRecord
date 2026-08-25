@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { App as AntdApp, Button, Card, Space, Typography, Upload } from 'antd';
-import { BarChartOutlined, PlusOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
+import { BarChartOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import type { Requirement, Status } from '../types';
 import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
-import { useDevopsApps, useRequirements } from '../hooks/useWorkTracker';
+import { useDevopsApps, useBranches, useRequirements } from '../hooks/useWorkTracker';
+import { getDefaultBranch } from '../config/branches';
 import RequirementForm, { type RequirementFormValues } from '../components/RequirementForm';
 import RequirementTable from '../components/RequirementTable';
 import StatsBar from '../components/StatsBar';
@@ -22,7 +22,7 @@ export default function RequirementListPage() {
   const { message, modal } = AntdApp.useApp();
   const { requirements, upsert, update, remove, removeMany, merge } = useRequirements();
   const devopsApps = useDevopsApps();
-  const navigate = useNavigate();
+  const { branches } = useBranches();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
@@ -167,9 +167,6 @@ export default function RequirementListPage() {
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateForm}>
             登记需求
           </Button>
-          <Button icon={<SettingOutlined />} onClick={() => navigate('/projects')}>
-            项目配置
-          </Button>
           <Upload
             accept=".json,application/json"
             showUploadList={false}
@@ -219,6 +216,8 @@ export default function RequirementListPage() {
       <RequirementTable
         data={filtered}
         apps={devopsApps.apps}
+        branches={branches}
+        defaultBranch={getDefaultBranch(branches)}
         onEdit={openEditForm}
         onDelete={handleDelete}
         onChangeStatus={(id, status) => update(id, { status })}

@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   App as AntdApp,
   Button,
@@ -14,14 +13,12 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { ArrowLeftOutlined, PlusOutlined, SyncOutlined } from '@ant-design/icons';
+import { PlusOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import { DEVOPS_GROUPS, type DevopsApp, type DevopsGroup } from '../config/devopsApps';
 import { fetchDevopsApps } from '../build';
 import { useDevopsApps } from '../hooks/useWorkTracker';
-
-interface Props {}
 
 const GROUP_COLORS: Record<DevopsGroup, string> = {
   JenkinsFrontweb: 'blue',
@@ -61,10 +58,9 @@ function GitUrlInput({ value, onSave }: { value?: string; onSave: (v: string) =>
   );
 }
 
-export default function ProjectConfigPage(_: Props) {
+export default function ProjectConfigPage() {
   const { apps, syncedAt, add, remove, update, mergeSynced } = useDevopsApps();
   const { message } = AntdApp.useApp();
-  const navigate = useNavigate();
   const [syncing, setSyncing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [form] = Form.useForm<AddFormValues>();
@@ -166,13 +162,9 @@ export default function ProjectConfigPage(_: Props) {
           marginBottom: 8,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>
-            返回
-          </Button>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            项目配置
-          </Typography.Title>
+        <div style={{ color: '#888', fontSize: 12 }}>
+          共 {apps.length} 个项目 · 最近同步：
+          {syncedAt ? dayjs(syncedAt).format('YYYY-MM-DD HH:mm') : '从未同步'}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button type="dashed" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>

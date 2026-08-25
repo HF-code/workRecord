@@ -12,7 +12,7 @@ const BUILD_API = `${API_BASE}/deploy/build`;
 const BRANCH_API = `${API_BASE}/deploy/branch?app=live-h5-2`;
 const APPLICATION_API = `${API_BASE}/deploy/application`;
 
-export type BuildEnv = 'dev' | 'test' | 'pre' | 'pre-txnj';
+export type BuildEnv = 'dev' | 'test' | 'pre' | 'pre-txnj' | 'preb-txnj';
 
 export interface BuildParams {
   app: string;

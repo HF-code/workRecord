@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { App as AntdApp, Button, Select, Space } from 'antd';
 import { BuildOutlined, MergeOutlined } from '@ant-design/icons';
 import { getCsrfToken, requestBuild, type BuildEnv } from '../build';
+import type { BranchConfig } from '../config/branches';
 
 interface Props {
   /** 项目名（构建 payload 的 app 字段） */
@@ -10,6 +11,10 @@ interface Props {
   gitUrl?: string;
   /** 源分支（需求登记的开发分支） */
   branch?: string;
+  /** 构建分支（环境）配置，来自「系统配置 → 分支配置」 */
+  branches: BranchConfig[];
+  /** 初始选中的分支，缺省取 branches 首项 */
+  defaultBranch?: BuildEnv;
 }
 
 /** 将 git 仓库地址（scp 或 http 形式）转为 GitLab 预填 MR 链接
@@ -27,16 +32,11 @@ export function buildMergeRequestUrl(gitUrl: string, branch: string, targetBranc
   return `${web}/-/merge_requests/new?${params.toString()}`;
 }
 
-const ENV_OPTIONS: { label: string; value: BuildEnv }[] = [
-  { label: 'dev', value: 'dev' },
-  { label: 'test', value: 'test' },
-  { label: 'pre', value: 'pre' },
-  { label: 'pre-txnj', value: 'pre-txnj' },
-];
-
-export default function BuildControls({ app, gitUrl, branch }: Props) {
+export default function BuildControls({ app, gitUrl, branch, branches, defaultBranch }: Props) {
   const { message } = AntdApp.useApp();
-  const [env, setEnv] = useState<BuildEnv>('test');
+  const [env, setEnv] = useState<BuildEnv>(
+    defaultBranch ?? branches.find((b) => b.isDefault)?.value ?? branches[0]?.value ?? 'test',
+  );
   const [building, setBuilding] = useState(false);
 
   const handleBuild = async () => {
@@ -78,7 +78,7 @@ export default function BuildControls({ app, gitUrl, branch }: Props) {
       <Select
         value={env}
         onChange={setEnv}
-        options={ENV_OPTIONS}
+        options={branches.map((b) => ({ label: b.label, value: b.value }))}
         style={{ width: 96 }}
       />
       <Button icon={<BuildOutlined />} loading={building} onClick={() => void handleBuild()}>

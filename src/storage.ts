@@ -1,9 +1,11 @@
 import type { Requirement } from './types';
 import { DEFAULT_DEVOPS_APPS, type DevopsApp } from './config/devopsApps';
+import { DEFAULT_BRANCHES, type BranchConfig } from './config/branches';
 
 const REQ_KEY = 'work-tracker:requirements:v1';
 const DEVOPS_APPS_KEY = 'work-tracker:devops-apps:v1';
 const DEVOPS_SYNCED_AT_KEY = 'work-tracker:devops-apps:synced-at';
+const BRANCHES_KEY = 'work-tracker:branches:v1';
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -51,4 +53,13 @@ export function saveDevopsSyncedAt(iso: string): void {
   } catch {
     // 静默处理
   }
+}
+
+/** 读取构建分支配置，无本地存储时回退配置文件默认数据 */
+export function loadBranches(): BranchConfig[] {
+  return loadJson<BranchConfig[]>(BRANCHES_KEY, DEFAULT_BRANCHES);
+}
+
+export function saveBranches(list: BranchConfig[]): void {
+  saveJson(BRANCHES_KEY, list);
 }

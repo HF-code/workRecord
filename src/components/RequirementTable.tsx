@@ -4,11 +4,15 @@ import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import { STATUSES, STATUS_COLORS, type Requirement, type Status } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
+import type { BranchConfig } from '../config/branches';
+import type { BuildEnv } from '../build';
 import BuildControls from './BuildControls';
 
 interface Props {
   data: Requirement[];
   apps: DevopsApp[];
+  branches: BranchConfig[];
+  defaultBranch?: BuildEnv;
   onEdit: (req: Requirement) => void;
   onDelete: (id: string) => void;
   onChangeStatus: (id: string, status: Status) => void;
@@ -18,6 +22,8 @@ interface Props {
 export default function RequirementTable({
   data,
   apps,
+  branches,
+  defaultBranch,
   onEdit,
   onDelete,
   onChangeStatus,
@@ -83,6 +89,8 @@ export default function RequirementTable({
                 app={it.project}
                 gitUrl={apps.find((a) => a.app === it.project)?.gitUrl}
                 branch={it.branch}
+                branches={branches}
+                defaultBranch={defaultBranch}
               />
             </div>
           ))}
