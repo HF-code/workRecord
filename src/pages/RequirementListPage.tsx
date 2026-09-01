@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { App as AntdApp, Badge, Button, Card, Drawer, Empty, Space, Tag, Typography, Upload } from 'antd';
 import { BarChartOutlined, PlusOutlined, UploadOutlined, ContainerOutlined } from '@ant-design/icons';
-import type { Requirement, Status } from '../types';
+import type { Requirement, SortMode, Status } from '../types';
 import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
 import { useDevopsApps, useBranches, useBuildPlan, useRequirements } from '../hooks/useWorkTracker';
 import { getDefaultBranch } from '../config/branches';
@@ -21,7 +21,8 @@ const INITIAL_FILTER: FilterValue = {
 
 export default function RequirementListPage() {
   const { message, modal } = AntdApp.useApp();
-  const { requirements, upsert, update, remove, removeMany, merge } = useRequirements();
+  const { requirements, upsert, update, remove, removeMany, merge, reorder, moveToPublishedTop, sortByReleaseDate } =
+    useRequirements();
   const devopsApps = useDevopsApps();
   const { branches } = useBranches();
   const buildPlan = useBuildPlan(update, getDefaultBranch(branches));
@@ -32,6 +33,7 @@ export default function RequirementListPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
+  const [sortMode, setSortMode] = useState<SortMode>('manual');
 
   const filtered = useMemo(() => {
     const kw = filter.keyword.trim().toLowerCase();
@@ -55,6 +57,21 @@ export default function RequirementListPage() {
     () => [...new Set(requirements.map((r) => r.status))],
     [requirements],
   );
+
+  /**
+   * 切换排序：发版时间排序为一次性真实重排数据（自动排），排完仍可继续手动拖拽；
+   * sortMode 仅作表头指示——手动拖拽后自动熄灭（见 handleReorder）
+   */
+  const handleChangeSortMode = (mode: SortMode) => {
+    setSortMode(mode);
+    if (mode !== 'manual') sortByReleaseDate(mode);
+  };
+
+  /** 拖拽排序：数据重排 + 退出排序指示状态（表头恢复中性，表示当前为手动顺序） */
+  const handleReorder = (activeId: string, overId: string) => {
+    if (sortMode !== 'manual') setSortMode('manual');
+    reorder(activeId, overId);
+  };
 
   const toggleStatusFilter = (status: Status) => {
     setFilter((f) => ({
@@ -82,8 +99,22 @@ export default function RequirementListPage() {
 
   const handleSubmit = (values: RequirementFormValues) => {
     const isEdit = upsert(editing?.id ?? null, values);
+    // 编辑保存后状态变为「已发布」，同样沉到尾部已发布区最前（与表格行内切换行为一致）
+    if (editing && editing.status !== '已发布' && values.status === '已发布') {
+      moveToPublishedTop(editing.id);
+      message.info('已发布的需求已自动沉底');
+    }
     message.success(isEdit ? '已保存' : '登记成功');
     closeForm();
+  };
+
+  /** 修改状态：切到「已发布」时自动沉底——移到尾部连续已发布区的最前面 */
+  const handleStatusChange = (id: string, status: Status) => {
+    update(id, { status });
+    if (status === '已发布') {
+      moveToPublishedTop(id);
+      message.info('已发布的需求已自动沉底');
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -233,8 +264,11 @@ export default function RequirementListPage() {
         buildPlan={buildPlan}
         onEdit={openEditForm}
         onDelete={handleDelete}
-        onChangeStatus={(id, status) => update(id, { status })}
+        onChangeStatus={handleStatusChange}
         onChangeReleaseDate={(id, releaseDate) => update(id, { releaseDate })}
+        onReorder={handleReorder}
+        sortMode={sortMode}
+        onChangeSortMode={handleChangeSortMode}
       />
 
       <RequirementForm

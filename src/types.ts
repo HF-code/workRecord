@@ -52,3 +52,6 @@ export const STATUS_COLORS: Record<Status, string> = {
   线上验证中: 'cyan',
   已发布: 'default',
 };
+
+/** 列表视图排序模式：手动拖拽顺序 / 发版时间降序（新→旧）/ 发版时间升序（旧→新） */
+export type SortMode = 'manual' | 'releaseDesc' | 'releaseAsc';

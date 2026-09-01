@@ -1,9 +1,13 @@
 import { App as AntdApp, Button, Checkbox, DatePicker, Empty, Popconfirm, Select, Table, Tag, Tooltip } from 'antd';
-import { BuildOutlined, ExportOutlined, MergeOutlined } from '@ant-design/icons';
+import { BuildOutlined, CaretDownOutlined, CaretUpOutlined, ExportOutlined, HolderOutlined, MergeOutlined } from '@ant-design/icons';
+import { DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent, type DraggableAttributes, type DraggableSyntheticListeners } from '@dnd-kit/core';
+import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import dayjs from 'dayjs';
-import { useState } from 'react';
+import { createContext, useContext, useState, type HTMLAttributes } from 'react';
 import type { ColumnsType } from 'antd/es/table';
-import { STATUSES, STATUS_COLORS, type Requirement, type Status, type ProjectBranch } from '../types';
+import { STATUSES, STATUS_COLORS, type Requirement, type SortMode, type Status, type ProjectBranch } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import type { BranchConfig } from '../config/branches';
 import { buildMergeRequestUrl, getCsrfToken, type BuildEnv } from '../build';
@@ -26,6 +30,71 @@ interface Props {
   onDelete: (id: string) => void;
   onChangeStatus: (id: string, status: Status) => void;
   onChangeReleaseDate: (id: string, date: string | null) => void;
+  /** 拖拽排序落点：把 activeId 行移动到 overId 行的位置（在完整数据上重排） */
+  onReorder: (activeId: string, overId: string) => void;
+  /** 最近一次排序模式（仅作表头指示：manual 表示手动顺序，排序/拖拽后由页面层维护） */
+  sortMode: SortMode;
+  /** 切换排序模式（发版时间排序为一次性真实重排，重排后仍可继续拖拽） */
+  onChangeSortMode: (mode: SortMode) => void;
+}
+
+/** 行与把手之间的桥接：SortableRow 上拿到的拖拽事件只绑定到把手图标，避免干扰行内其他交互控件 */
+const DragHandleContext = createContext<{
+  attributes: DraggableAttributes;
+  listeners: DraggableSyntheticListeners;
+} | null>(null);
+
+interface SortableRowProps extends HTMLAttributes<HTMLTableRowElement> {
+  'data-row-key': string;
+}
+
+/** 可排序表格行：transform 跟随拖拽位移，把手见 DragHandle */
+function SortableRow({ style, ...props }: SortableRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props['data-row-key'],
+  });
+  return (
+    <DragHandleContext.Provider value={{ attributes, listeners }}>
+      <tr
+        {...props}
+        ref={setNodeRef}
+        style={{
+          ...style,
+          transform: CSS.Translate.toString(transform),
+          transition,
+          ...(isDragging ? { position: 'relative', zIndex: 999 } : {}),
+        }}
+      />
+    </DragHandleContext.Provider>
+  );
+}
+
+/** 拖拽把手：可聚焦（键盘空格拾起、方向键移动），触摸拖拽需 touchAction: 'none' */
+function DragHandle() {
+  const ctx = useContext(DragHandleContext);
+  return (
+    <span
+      data-testid="requirement-drag-handle"
+      aria-label="拖拽排序"
+      style={{ cursor: 'grab', color: '#999', touchAction: 'none', display: 'inline-flex' }}
+      {...ctx?.attributes}
+      {...ctx?.listeners}
+    >
+      <HolderOutlined />
+    </span>
+  );
+}
+
+/** 表头排序指示器：上下双箭头，激活方向高亮（仿 antd Table 排序指示） */
+function SortIndicator({ mode }: { mode: SortMode }) {
+  return (
+    <span
+      style={{ display: 'inline-flex', flexDirection: 'column', gap: 0, marginLeft: 4, verticalAlign: 'middle', lineHeight: 0.6 }}
+    >
+      <CaretUpOutlined style={{ fontSize: 9, color: mode === 'releaseAsc' ? '#1677ff' : '#bbb' }} />
+      <CaretDownOutlined style={{ fontSize: 9, color: mode === 'releaseDesc' ? '#1677ff' : '#bbb' }} />
+    </span>
+  );
 }
 
 export default function RequirementTable({
@@ -37,9 +106,28 @@ export default function RequirementTable({
   onDelete,
   onChangeStatus,
   onChangeReleaseDate,
+  onReorder,
+  sortMode,
+  onChangeSortMode,
 }: Props) {
   const { message } = AntdApp.useApp();
   const [buildingReq, setBuildingReq] = useState<Record<string, boolean>>({});
+
+  // distance: 1 防止点击误触拖拽；KeyboardSensor 支持键盘无障碍排序
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 1 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  /** 拖拽落点：交给上层在完整数据上重排（兼容筛选视图）。排序后数据已真实排好，拖拽始终可用 */
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (over && active.id !== over.id) onReorder(String(active.id), String(over.id));
+  };
+
+  /** 表头点击循环切换：手动 → 发版时间降序 → 发版时间升序 → 手动（排序为一次性重排，"手动"仅清指示） */
+  const cycleSortMode = () => {
+    onChangeSortMode(sortMode === 'manual' ? 'releaseDesc' : sortMode === 'releaseDesc' ? 'releaseAsc' : 'manual');
+  };
 
   const envOptions = branches.map((b) => ({ label: b.label, value: b.value }));
 
@@ -111,6 +199,13 @@ export default function RequirementTable({
   };
 
   const columns: ColumnsType<Requirement> = [
+    {
+      title: '',
+      key: 'dragHandle',
+      width: 36,
+      align: 'center',
+      render: () => <DragHandle />,
+    },
     {
       title: '需求名称',
       dataIndex: 'name',
@@ -258,7 +353,17 @@ export default function RequirementTable({
       ),
     },
     {
-      title: '发版时间',
+      title: (
+        <span
+          onClick={cycleSortMode}
+          style={{ cursor: 'pointer', userSelect: 'none' }}
+          title="点击自动排序：手动 → 发版时间降序 → 发版时间升序（排序后可继续拖拽微调）"
+          data-testid="release-date-sort-header"
+        >
+          发版时间
+          <SortIndicator mode={sortMode} />
+        </span>
+      ),
       dataIndex: 'releaseDate',
       key: 'releaseDate',
       width: 150,
@@ -309,13 +414,22 @@ export default function RequirementTable({
   ];
 
   return (
-    <Table<Requirement>
-      rowKey="id"
-      columns={columns}
-      dataSource={data}
-      scroll={{ x: 'max-content' }}
-      pagination={{ pageSize: 20, showSizeChanger: false, hideOnSinglePage: true }}
-      locale={{ emptyText: <Empty description="暂无需求，点击右上角「登记需求」开始" /> }}
-    />
+    <DndContext
+      sensors={sensors}
+      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext items={data.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+        <Table<Requirement>
+          rowKey="id"
+          columns={columns}
+          dataSource={data}
+          components={{ body: { row: SortableRow } }}
+          scroll={{ x: 'max-content' }}
+          pagination={{ pageSize: 20, showSizeChanger: false, hideOnSinglePage: true }}
+          locale={{ emptyText: <Empty description="暂无需求，点击右上角「登记需求」开始" /> }}
+        />
+      </SortableContext>
+    </DndContext>
   );
 }

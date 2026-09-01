@@ -28,6 +28,15 @@ function genId(): string {
   });
 }
 
+/** 数组内移动元素（from 移到 to），索引非法或相同则返回原数组引用 */
+function arrayMove<T>(list: T[], from: number, to: number): T[] {
+  if (from < 0 || to < 0 || from === to || from >= list.length || to >= list.length) return list;
+  const next = list.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
 export function useRequirements() {
   const [requirements, setRequirements] = useState<Requirement[]>(() => {
     migrateLegacyBuildPlan();
@@ -37,6 +46,64 @@ export function useRequirements() {
   useEffect(() => {
     saveRequirements(requirements);
   }, [requirements]);
+
+  /** 拖拽排序：把 activeId 行移动到 overId 行的位置（在完整列表上重排，兼容筛选视图内拖拽） */
+  const reorder = (activeId: string, overId: string) => {
+    setRequirements((list) =>
+      arrayMove(
+        list,
+        list.findIndex((r) => r.id === activeId),
+        list.findIndex((r) => r.id === overId),
+      ),
+    );
+  };
+
+  /**
+   * 一次性按发版时间自动重排（真实改动数据顺序并持久化，之后可继续手动拖拽微调）：
+   * 未发布在前、已发布在后（保持"已发布沉底"不变量），各组内按发版时间排，无发版时间垫底。
+   * sort 为稳定排序，同日期保持原有相对顺序。
+   */
+  const sortByReleaseDate = (mode: 'releaseDesc' | 'releaseAsc') => {
+    setRequirements((list) => {
+      const dated = list.filter((r): r is Requirement & { releaseDate: string } => r.releaseDate !== null);
+      const undated = list.filter((r) => r.releaseDate === null);
+      // releaseDate 为 'YYYY-MM-DD'，字符串比较即日期比较
+      dated.sort((a, b) =>
+        mode === 'releaseDesc'
+          ? b.releaseDate.localeCompare(a.releaseDate)
+          : a.releaseDate.localeCompare(b.releaseDate),
+      );
+      const sorted = [...dated, ...undated];
+      // 未发布在前、已发布在后
+      return [...sorted.filter((r) => r.status !== '已发布'), ...sorted.filter((r) => r.status === '已发布')];
+    });
+  };
+
+  /**
+   * 状态切为「已发布」时沉底：从列表末尾往前找第一条非已发布的需求，
+   * 插到它后面（即尾部连续「已发布」区的最前面）。
+   * 不能用"第一条已发布之前"定位——已发布可能被手动拖拽到前面，
+   * 只有从末尾往前数的连续已发布段才是真正的"沉底区"。
+   */
+  const moveToPublishedTop = (id: string) => {
+    setRequirements((list) => {
+      const from = list.findIndex((r) => r.id === id);
+      if (from < 0) return list;
+      // 从末尾往前找最后一条非已发布（此时自身状态已更新为已发布，扫描会跳过自己）
+      let anchor = -1;
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].status !== '已发布') {
+          anchor = i;
+          break;
+        }
+      }
+      // 插入位置 = anchor 之后；全是已发布（anchor = -1）则插到最前
+      const insertAt = anchor + 1;
+      // arrayMove 是"先删后插"：from 在 insertAt 之前时，删除后目标位置会前移 1
+      const to = from < insertAt ? insertAt - 1 : insertAt;
+      return arrayMove(list, from, to);
+    });
+  };
 
   const update = (id: string, patch: Partial<Requirement>) => {
     setRequirements((list) =>
@@ -85,7 +152,7 @@ export function useRequirements() {
     return fresh;
   };
 
-  return { requirements, upsert, update, remove, removeMany, merge };
+  return { requirements, upsert, update, remove, removeMany, merge, reorder, moveToPublishedTop, sortByReleaseDate };
 }
 
 export function useDevopsApps() {
