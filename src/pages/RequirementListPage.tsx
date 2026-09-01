@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { App as AntdApp, Button, Card, Space, Typography, Upload } from 'antd';
-import { BarChartOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import { App as AntdApp, Badge, Button, Card, Drawer, Empty, Space, Tag, Typography, Upload } from 'antd';
+import { BarChartOutlined, PlusOutlined, UploadOutlined, ContainerOutlined } from '@ant-design/icons';
 import type { Requirement, Status } from '../types';
 import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
 import { useDevopsApps, useBranches, useBuildPlan, useRequirements } from '../hooks/useWorkTracker';
@@ -10,6 +10,7 @@ import RequirementTable from '../components/RequirementTable';
 import StatsBar from '../components/StatsBar';
 import ProjectStatsModal from '../components/ProjectStatsModal';
 import FilterBar, { type FilterValue } from '../components/FilterBar';
+import { useBuildTasks, type BuildTaskPhase } from '../hooks/useBuildTasks';
 
 const INITIAL_FILTER: FilterValue = {
   statuses: [],
@@ -24,10 +25,12 @@ export default function RequirementListPage() {
   const devopsApps = useDevopsApps();
   const { branches } = useBranches();
   const buildPlan = useBuildPlan(update, getDefaultBranch(branches));
+  const { tasks, activeCount, cancelTask, removeTask, clear } = useBuildTasks();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
 
   const filtered = useMemo(() => {
@@ -180,6 +183,15 @@ export default function RequirementListPage() {
           </Upload>
           <Button onClick={handleExportAll}>导出全部</Button>
           <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
+          <Badge count={activeCount} size="small" offset={[-2, 2]}>
+            <Button
+              icon={<ContainerOutlined />}
+              onClick={() => setTasksOpen(true)}
+              data-testid="build-tasks-open-button"
+            >
+              构建任务
+            </Button>
+          </Badge>
         </Space>
       </div>
 
@@ -238,6 +250,110 @@ export default function RequirementListPage() {
         requirements={filtered}
         onClose={() => setStatsOpen(false)}
       />
+
+      <Drawer
+        title={`构建任务${activeCount > 0 ? `（进行中 ${activeCount}）` : ''}`}
+        open={tasksOpen}
+        onClose={() => setTasksOpen(false)}
+        width={460}
+        extra={
+          tasks.length > 0 ? (
+            <Button type="link" onClick={clear} data-testid="build-tasks-clear-button">
+              清空记录
+            </Button>
+          ) : null
+        }
+      >
+        {tasks.length === 0 ? (
+          <Empty description="暂无构建任务" />
+        ) : (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {tasks.map((t) => (
+              <BuildTaskItem
+                key={t.id}
+                task={t}
+                onCancel={() => cancelTask(t.id)}
+                onRemove={() => removeTask(t.id)}
+              />
+            ))}
+          </Space>
+        )}
+      </Drawer>
+    </Card>
+  );
+}
+
+const TASK_PHASE_TEXT: Record<BuildTaskPhase, { text: string; color: string }> = {
+  building: { text: '构建中', color: 'processing' },
+  waiting: { text: '等待重试', color: 'warning' },
+  done: { text: '已完成', color: 'success' },
+  failed: { text: '失败', color: 'error' },
+  cancelled: { text: '已取消', color: 'default' },
+};
+
+function BuildTaskItem({
+  task,
+  onCancel,
+  onRemove,
+}: {
+  task: import('../hooks/useBuildTasks').BuildTask;
+  onCancel: () => void;
+  onRemove: () => void;
+}) {
+  const phase = TASK_PHASE_TEXT[task.phase];
+  const active = task.phase === 'building' || task.phase === 'waiting';
+  return (
+    <Card size="small" style={{ width: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{task.reqName}</div>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#555' }}>
+            {task.app} · {task.env}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <Tag color={phase.color}>{phase.text}</Tag>
+            {task.phase === 'waiting' && (
+              <span style={{ fontSize: 12, color: '#888' }}>
+                第 {task.retry} 次重试，{task.nextInSec}s 后
+              </span>
+            )}
+            {task.detail && task.phase !== 'building' && (
+              <div style={{ fontSize: 12, color: '#999', marginTop: 4, wordBreak: 'break-all' }}>
+                {task.detail}
+              </div>
+            )}
+            {task.recordUrl && (
+              <div style={{ marginTop: 4 }}>
+                <a
+                  href={task.recordUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12 }}
+                  data-testid="build-task-record-link"
+                >
+                  查看构建记录
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ flexShrink: 0 }}>
+          {active ? (
+            <Button
+              danger
+              size="small"
+              onClick={onCancel}
+              data-testid="build-task-cancel-button"
+            >
+              取消
+            </Button>
+          ) : (
+            <Button size="small" onClick={onRemove} data-testid="build-task-remove-button">
+              移除
+            </Button>
+          )}
+        </div>
+      </div>
     </Card>
   );
 }

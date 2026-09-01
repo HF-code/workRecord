@@ -81,6 +81,24 @@ export function saveBuildPollInterval(seconds: number): void {
   }
 }
 
+/* ---------- 失败时是否自动轮询构建（开关） ---------- */
+const AUTO_BUILD_ON_FAIL_KEY = 'work-tracker:auto-build-on-fail:v1';
+
+/** 默认开启：构建失败且为「上一任务尚未完成」时自动轮询重试 */
+export function loadAutoBuildOnFail(): boolean {
+  const raw = localStorage.getItem(AUTO_BUILD_ON_FAIL_KEY);
+  if (raw === null) return true;
+  return raw === '1' || raw === 'true';
+}
+
+export function saveAutoBuildOnFail(on: boolean): void {
+  try {
+    localStorage.setItem(AUTO_BUILD_ON_FAIL_KEY, on ? '1' : '0');
+  } catch {
+    // 静默处理
+  }
+}
+
 /** 一次性迁移：将旧版本独立存储的构建目标分支 / 勾选项并回 requirements（同表），并清理旧 key */
 export function migrateLegacyBuildPlan(): void {
   const LEGACY_ENVS_KEY = 'work-tracker:build-envs:v1';

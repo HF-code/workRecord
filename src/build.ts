@@ -1,5 +1,8 @@
 /**
  * 运维平台构建请求，参考 vzan_crx 扩展 background.js 的直连实现。
+ * 新版接口为两步式：
+ * 1) GET /deploy/build?app=&app_group=&build_other=&get_build_number=1 取最新构建编号（返回纯数字）；
+ * 2) POST /deploy/build 携带该 number 提交构建。
  * 请求统一走相对路径 /devops-api：
  * - 本地开发：Vite proxy 转发到 https://devops.vzan.com，浏览器 cookie 自动携带
  * - 远程部署：自带 Node 服务端（server/）转发，入站 Cookie 头透传给上游
@@ -11,6 +14,11 @@ const API_BASE = '/devops-api';
 const BUILD_API = `${API_BASE}/deploy/build`;
 const BRANCH_API = `${API_BASE}/deploy/branch?app=live-h5-2`;
 const APPLICATION_API = `${API_BASE}/deploy/application`;
+
+/** 构建/发布记录页的分组，构建 payload 的 group 与记录页 app_group 保持一致 */
+const BUILD_GROUP = 'JenkinsFrontweb';
+/** 运维平台构建记录页基础地址 */
+const DEVOPS_WEB = 'https://devops.vzan.com/index.html';
 
 export type BuildEnv = 'dev' | 'test' | 'pre' | 'pre-txnj' | 'preb-txnj';
 
@@ -40,6 +48,20 @@ export interface BuildResult {
   ok: boolean;
   status: number;
   detail: string;
+  /** 构建编号（第二步 POST 成功时返回，对应构建记录页的 number 参数） */
+  number?: number;
+  /** 构建记录页地址，仅成功时返回 */
+  recordUrl?: string;
+}
+
+/** 构建记录页地址 */
+export function buildRecordUrl(app: string, buildOther: string, number: number): string {
+  return (
+    `${DEVOPS_WEB}#/gou-jian-ji-lu/?app=${encodeURIComponent(app)}` +
+    `&number=${number}` +
+    `&app_group=${encodeURIComponent(BUILD_GROUP)}` +
+    `&build_other=${encodeURIComponent(buildOther)}`
+  );
 }
 
 /** 从 document.cookie 读取 csrftoken，无值视为未登录 */
@@ -77,7 +99,7 @@ async function resolveBuildBranch(app: string, env: BuildEnv): Promise<string> {
 
 async function buildPayload(params: BuildParams) {
   return {
-    group: 'JenkinsFrontweb',
+    group: BUILD_GROUP,
     app: params.app,
     branch: await resolveBuildBranch(params.app, params.env),
     committed_id: '',
@@ -86,6 +108,48 @@ async function buildPayload(params: BuildParams) {
     build_type: 'docker_build',
     build_other: params.env || 'dev',
   };
+}
+
+type BuildPayload = Awaited<ReturnType<typeof buildPayload>>;
+
+/**
+ * 第一步：GET 获取最新构建编号。
+ * GET /deploy/build?app=&app_group=&build_other=&get_build_number=1
+ * 成功返回纯数字（如 4423）；若上一任务尚未完成，返回 JSON 且 detail 为「上一任务尚未完成，请耐心等待」。
+ */
+async function fetchBuildNumber(
+  payload: BuildPayload,
+): Promise<{ ok: true; number: number } | { ok: false; status: number; detail: string }> {
+  const url =
+    `${BUILD_API}?app=${encodeURIComponent(payload.app)}` +
+    `&app_group=${encodeURIComponent(payload.group)}` +
+    `&build_other=${encodeURIComponent(payload.build_other)}` +
+    `&get_build_number=1`;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(),
+      credentials: 'include',
+    });
+    const text = await res.text();
+    let detail = '';
+    try {
+      const fail = JSON.parse(text);
+      if (fail && typeof fail === 'object' && fail.detail) detail = String(fail.detail);
+    } catch {
+      // 纯数字响应，非 JSON
+    }
+    if (res.status !== 200 || detail) {
+      return { ok: false, status: res.status, detail: detail || `HTTP ${res.status}` };
+    }
+    const number = Number.parseInt(text.trim(), 10);
+    if (Number.isNaN(number)) {
+      return { ok: false, status: res.status, detail: `获取构建编号失败：${text}` };
+    }
+    return { ok: true, number };
+  } catch (e) {
+    return { ok: false, status: 0, detail: (e as Error).message };
+  }
 }
 
 /** 运维平台应用接口返回的单条原始数据（只取用到的字段） */
@@ -132,8 +196,19 @@ export async function fetchDevopsApps(): Promise<DevopsApp[]> {
   });
 }
 
+/**
+ * 触发构建（新版接口，两步式）：
+ * 1) GET 获取最新构建编号（含「上一任务尚未完成」的排队判断）；
+ * 2) POST 提交构建，payload 携带第一步得到的 number。
+ */
 export async function requestBuild(params: BuildParams): Promise<BuildResult> {
   const payload = await buildPayload(params);
+  // 第一步：取构建编号；失败（如上一任务尚未完成）直接返回，交给上层决定是否重试
+  const numberResult = await fetchBuildNumber(payload);
+  if (!numberResult.ok) {
+    return { ok: false, status: numberResult.status, detail: numberResult.detail };
+  }
+  const number = numberResult.number;
   try {
     const res = await fetch(BUILD_API, {
       method: 'POST',
@@ -141,7 +216,7 @@ export async function requestBuild(params: BuildParams): Promise<BuildResult> {
         'content-type': 'application/json',
         ...buildHeaders(),
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, number }),
       credentials: 'include',
     });
     let detail = 'HTTP ' + res.status;
@@ -151,8 +226,15 @@ export async function requestBuild(params: BuildParams): Promise<BuildResult> {
     } catch {
       // 忽略非 JSON 响应
     }
-    return { ok: res.status === 200, status: res.status, detail };
+    const ok = res.status === 200;
+    return {
+      ok,
+      status: res.status,
+      detail,
+      number,
+      recordUrl: ok ? buildRecordUrl(payload.app, payload.build_other, number) : undefined,
+    };
   } catch (e) {
-    return { ok: false, status: 0, detail: (e as Error).message };
+    return { ok: false, status: 0, detail: (e as Error).message, number };
   }
 }

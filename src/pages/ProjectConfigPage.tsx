@@ -9,6 +9,7 @@ import {
   Modal,
   Popconfirm,
   Select,
+  Switch,
   Table,
   Tag,
 } from 'antd';
@@ -18,6 +19,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { DEVOPS_GROUPS, type DevopsApp, type DevopsGroup } from '../config/devopsApps';
 import { fetchDevopsApps } from '../build';
 import { useDevopsApps } from '../hooks/useWorkTracker';
+import { loadAutoBuildOnFail, saveAutoBuildOnFail } from '../storage';
 
 const GROUP_COLORS: Record<DevopsGroup, string> = {
   JenkinsFrontweb: 'blue',
@@ -63,7 +65,13 @@ export default function ProjectConfigPage() {
   const [syncing, setSyncing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [autoBuildOnFail, setAutoBuildOnFail] = useState<boolean>(() => loadAutoBuildOnFail());
   const [form] = Form.useForm<AddFormValues>();
+
+  const handleToggleAutoBuild = (checked: boolean) => {
+    setAutoBuildOnFail(checked);
+    saveAutoBuildOnFail(checked);
+  };
 
   // 按项目名 / 别名 / Git 地址模糊过滤
   const filteredApps = useMemo(() => {
@@ -207,6 +215,27 @@ export default function ProjectConfigPage() {
         共 {apps.length} 个项目
         {keyword.trim() && `（匹配 ${filteredApps.length} 个）`} · 最近同步：
         {syncedAt ? dayjs(syncedAt).format('YYYY-MM-DD HH:mm') : '从未同步'}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 12,
+          padding: '8px 12px',
+          background: '#fafafa',
+          borderRadius: 6,
+        }}
+      >
+        <Switch
+          checked={autoBuildOnFail}
+          onChange={handleToggleAutoBuild}
+          data-testid="project-config-auto-build-switch"
+        />
+        <span style={{ fontWeight: 500 }}>失败自动构建</span>
+        <span style={{ color: '#888', fontSize: 12 }}>
+          构建返回「上一任务尚未完成」时按配置间隔自动轮询重试（默认开启）
+        </span>
       </div>
       <Table<DevopsApp>
         rowKey="app"

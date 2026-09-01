@@ -6,9 +6,8 @@ import type { ColumnsType } from 'antd/es/table';
 import { STATUSES, STATUS_COLORS, type Requirement, type Status, type ProjectBranch } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import type { BranchConfig } from '../config/branches';
-import { buildMergeRequestUrl, getCsrfToken, requestBuild, type BuildEnv } from '../build';
-import { loadBuildPollInterval } from '../storage';
-import { BUILD_BUSY_DETAIL } from '../config/buildConfig';
+import { buildMergeRequestUrl, getCsrfToken, type BuildEnv } from '../build';
+import { startBuildTask } from '../hooks/useBuildTasks';
 
 interface BuildPlan {
   getEnv: (req: Requirement) => BuildEnv;
@@ -71,53 +70,27 @@ export default function RequirementTable({
     }
     setBuildingReq((m) => ({ ...m, [req.id]: true }));
 
-    // 单个 target 的构建请求，遇到「上一任务尚未完成」时按系统配置间隔自动轮询重试。
-    // 连续重试次数上限仅作兜底（防止永久卡死），不限制轮询间隔本身。
-    const MAX_RETRY = 30;
-    const requestBuildWithRetry = async (app: string, env: BuildEnv): Promise<{
-      ok: boolean;
-      detail: string;
-      status?: number;
-      app: string;
-    }> => {
-      let retry = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const r = await requestBuild({ app, env, update: false });
-        if (r.ok) return { ...r, app };
-        // 登录态失效直接抛出，不再轮询
-        if (r.status === 401 || r.status === 403) return { ...r, app };
-        // 非「上一任务尚未完成」的其他失败，直接返回
-        if (r.detail !== BUILD_BUSY_DETAIL) return { ...r, app };
-        // 命中「上一任务尚未完成」，达到兜底上限则停止轮询，交由用户手动重试
-        if (retry >= MAX_RETRY) {
-          return { ...r, app };
-        }
-        const interval = loadBuildPollInterval(); // 秒
-        retry += 1;
-        message.loading({
-          content: `【${app}】上一任务尚未完成，${interval} 秒后自动重试（第 ${retry} 次）`,
-          key: `build-retry-${req.id}-${app}`,
-          duration: interval,
-        });
-        await new Promise((resolve) => setTimeout(resolve, interval * 1000));
-      }
-    };
-
     try {
+      // 每个 target 作为独立任务交给全局构建任务 store 处理（含自动轮询重试）。
+      // 任务状态可在「构建任务」面板查看 / 取消，切换标签页或最小化仍会继续。
       const results = await Promise.all(
-        targets.map((it) => requestBuildWithRetry(it.project, buildPlan.getEnv(req))),
+        targets.map((it) =>
+          startBuildTask(req.name, it.project, buildPlan.getEnv(req)),
+        ),
       );
       let okCount = 0;
       const fails: string[] = [];
       let authFailed = false;
-      results.forEach((r) => {
+      results.forEach((r, i) => {
+        const app = targets[i].project;
         if (r.ok) {
           okCount += 1;
         } else if (r.status === 401 || r.status === 403) {
           authFailed = true;
+        } else if (r.detail === '已取消') {
+          // 用户主动取消，不额外提示
         } else {
-          fails.push(`【${r.app}】${r.detail}`);
+          fails.push(`【${app}】${r.detail}`);
         }
       });
       if (authFailed) {
@@ -129,7 +102,9 @@ export default function RequirementTable({
         if (okCount > 0) message.success(`成功触发 ${okCount} 个项目构建`);
         return;
       }
-      message.success(`【${req.name}】已触发 ${okCount} 个项目构建`);
+      if (okCount > 0) {
+        message.success(`【${req.name}】已触发 ${okCount} 个项目构建`);
+      }
     } finally {
       setBuildingReq((m) => ({ ...m, [req.id]: false }));
     }
