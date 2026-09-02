@@ -275,6 +275,7 @@ export default function RequirementListPage() {
         open={formOpen}
         editing={editing}
         apps={devopsApps.apps}
+        branches={branches}
         onCancel={closeForm}
         onSubmit={handleSubmit}
       />

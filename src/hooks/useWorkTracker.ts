@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Requirement } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import type { BranchConfig } from '../config/branches';
+import { DEFAULT_BRANCHES } from '../config/branches';
 import type { BuildEnv } from '../build';
 import {
   loadBranches,
@@ -120,7 +121,13 @@ export function useRequirements() {
     }));
     if (editingId) {
       const existing = requirements.find((r) => r.id === editingId);
-      update(editingId, { ...values, items, buildEnv: existing?.buildEnv, buildItems: existing?.buildItems });
+      // buildEnv 以表单提交值为准（表单回填了原值，用户可改），缺省兜底旧值
+      update(editingId, {
+        ...values,
+        items,
+        buildEnv: values.buildEnv ?? existing?.buildEnv,
+        buildItems: existing?.buildItems,
+      });
       return true;
     }
     const now = new Date().toISOString();
@@ -213,9 +220,9 @@ export function useBranches() {
     setBranches(list);
   };
 
-  /** 恢复默认数据 */
+  /** 恢复默认数据（真正重置为 DEFAULT_BRANCHES，而非重读 localStorage 旧值） */
   const reset = () => {
-    setBranches(loadBranches());
+    setBranches(DEFAULT_BRANCHES);
   };
 
   return { branches, save, reset };

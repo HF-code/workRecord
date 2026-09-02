@@ -13,16 +13,9 @@ import {
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { BranchConfig } from '../config/branches';
-import { DEFAULT_BRANCHES } from '../config/branches';
+import { BUILTIN_BUILD_ENVS, DEFAULT_BRANCHES } from '../config/branches';
 import type { BuildEnv } from '../build';
 import { useBranches } from '../hooks/useWorkTracker';
-
-const BUILD_ENVS: BuildEnv[] = ['dev', 'test', 'pre', 'pre-txnj', 'preb-txnj'];
-
-/** 校验 value 是否为合法的 BuildEnv（构建接口支持） */
-function isBuildEnv(value: string): value is BuildEnv {
-  return (BUILD_ENVS as string[]).includes(value);
-}
 
 export default function BranchConfigPage() {
   const { branches, save, reset } = useBranches();
@@ -47,9 +40,9 @@ export default function BranchConfigPage() {
       message.warning('该分支标识已存在');
       return;
     }
-    if (!isBuildEnv(value)) {
-      message.warning(`分支标识必须是构建支持的环境之一：${BUILD_ENVS.join(' / ')}`);
-      return;
+    // 允许自定义标识（运维平台新增环境无需改代码），非内置环境给轻提示防拼写错误
+    if (!BUILTIN_BUILD_ENVS.includes(value)) {
+      message.info('非内置环境，请确认运维平台支持该分支标识');
     }
     syncDraft([...draft, { value, label }]);
     setLabelDraft('');
@@ -136,12 +129,12 @@ export default function BranchConfigPage() {
     <Card>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
         构建按钮前的分支下拉选项，可在此自定义增删与排序（拖拽行顺序调整）及默认选中项。
-        分支标识须为构建接口支持的环境之一：{BUILD_ENVS.join(' / ')}。
+        内置环境：{BUILTIN_BUILD_ENVS.join(' / ')}；也可输入自定义分支标识（需运维平台支持）。
       </Typography.Paragraph>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <Input
-          placeholder="分支标识，如 test"
+          placeholder="分支标识，如 test 或自定义"
           value={valueDraft}
           onChange={(e) => setValueDraft(e.target.value)}
           style={{ width: 180 }}

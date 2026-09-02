@@ -20,7 +20,12 @@ const BUILD_GROUP = 'JenkinsFrontweb';
 /** 运维平台构建记录页基础地址 */
 const DEVOPS_WEB = 'https://devops.vzan.com/index.html';
 
-export type BuildEnv = 'dev' | 'test' | 'pre' | 'pre-txnj' | 'preb-txnj';
+/**
+ * 构建环境/分支标识。
+ * 内置环境见 config/branches.ts 的 BUILTIN_BUILD_ENVS；也支持自定义标识
+ * （运维平台新增环境时无需改代码，标识会拼为 origin/{env} 传给构建接口）。
+ */
+export type BuildEnv = string;
 
 /** 将 git 仓库地址（scp 或 http 形式）转为 GitLab 预填 MR 链接
  * @param branch 源分支（需求登记的开发分支）

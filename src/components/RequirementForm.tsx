@@ -3,6 +3,9 @@ import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { STATUSES, VERSIONS, type Requirement, type Status, type Version } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
+import type { BranchConfig } from '../config/branches';
+import { getDefaultBranch } from '../config/branches';
+import type { BuildEnv } from '../build';
 import ProjectSelect from './ProjectSelect';
 
 interface FormValues {
@@ -11,6 +14,8 @@ interface FormValues {
   status: Status;
   releaseDate?: dayjs.Dayjs | null;
   version: Version;
+  /** 目标分支（构建环境），登记时即选定，构建控件与 MR 目标分支共用 */
+  buildEnv: BuildEnv;
   items: { id?: string; project: string; branch: string }[];
   remark?: string;
 }
@@ -22,6 +27,7 @@ export interface RequirementFormValues {
   status: Status;
   releaseDate: string | null;
   version: Version;
+  buildEnv: BuildEnv;
   items: { id?: string; project: string; branch: string }[];
   remark?: string;
 }
@@ -30,12 +36,18 @@ interface Props {
   open: boolean;
   editing: Requirement | null;
   apps: DevopsApp[];
+  /** 分支配置（与构建按钮前下拉同源同一份数据），供目标分支选择 */
+  branches: BranchConfig[];
   onCancel: () => void;
   onSubmit: (values: RequirementFormValues) => void;
 }
 
-export default function RequirementForm({ open, editing, apps, onCancel, onSubmit }: Props) {
+export default function RequirementForm({ open, editing, apps, branches, onCancel, onSubmit }: Props) {
   const [form] = Form.useForm<FormValues>();
+  /** 目标分支选项与构建控件同源：来自「系统配置 → 分支配置」 */
+  const envOptions = branches.map((b) => ({ label: b.label, value: b.value }));
+  /** 未选过时（含历史数据）默认选中全局默认分支 */
+  const defaultEnv = getDefaultBranch(branches);
 
   const initialValues: FormValues = editing
     ? {
@@ -44,6 +56,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         status: editing.status,
         releaseDate: editing.releaseDate ? dayjs(editing.releaseDate) : null,
         version: editing.version ?? '大版',
+        buildEnv: editing.buildEnv ?? defaultEnv,
         items: editing.items.map((it) => ({ id: it.id, project: it.project, branch: it.branch })),
         remark: editing.remark ?? '',
       }
@@ -53,6 +66,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         status: '开发中',
         releaseDate: null,
         version: '大版',
+        buildEnv: defaultEnv,
         items: [{ project: undefined as unknown as string, branch: '' }],
         remark: '',
       };
@@ -65,6 +79,7 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
       status: values.status,
       releaseDate: values.releaseDate ? values.releaseDate.format('YYYY-MM-DD') : null,
       version: values.version,
+      buildEnv: values.buildEnv,
       items: values.items.map((it) => ({
         id: it.id,
         project: it.project,
@@ -104,15 +119,23 @@ export default function RequirementForm({ open, editing, apps, onCancel, onSubmi
         >
           <Input placeholder="https://www.tapd.cn/..." />
         </Form.Item>
-        <Space size="large" style={{ display: 'flex' }}>
-          <Form.Item name="status" label="状态" rules={[{ required: true }]} style={{ width: 200 }}>
+        <Space size="large" style={{ display: 'flex', flexWrap: 'wrap' }}>
+          <Form.Item name="status" label="状态" rules={[{ required: true }]} style={{ width: 160 }}>
             <Select options={STATUSES.map((s) => ({ label: s, value: s }))} />
           </Form.Item>
-          <Form.Item name="releaseDate" label="发版时间" style={{ width: 200 }}>
+          <Form.Item name="releaseDate" label="发版时间" style={{ width: 160 }}>
             <DatePicker allowClear style={{ width: '100%' }} placeholder="可留空" />
           </Form.Item>
-          <Form.Item name="version" label="版本" rules={[{ required: true }]} style={{ width: 140 }}>
+          <Form.Item name="version" label="版本" rules={[{ required: true }]} style={{ width: 120 }}>
             <Select options={VERSIONS.map((v) => ({ label: v, value: v }))} />
+          </Form.Item>
+          <Form.Item
+            name="buildEnv"
+            label="目标分支"
+            rules={[{ required: true, message: '请选择目标分支' }]}
+            style={{ width: 160 }}
+          >
+            <Select options={envOptions} placeholder="选择构建分支" />
           </Form.Item>
         </Space>
         <Form.List name="items">

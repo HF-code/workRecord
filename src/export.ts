@@ -64,9 +64,9 @@ function isValidItem(v: unknown): v is ProjectBranch {
 function isValidRequirement(v: unknown): v is Requirement {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
+  // buildEnv 支持自定义标识，仅拦截非字符串与空串（空串会让 getEnv 的 ?? defaultBranch 失效）
   const validBuildEnv =
-    r.buildEnv === undefined ||
-    (typeof r.buildEnv === 'string' && ['dev', 'test', 'pre', 'pre-txnj', 'preb-txnj'].includes(r.buildEnv));
+    r.buildEnv === undefined || (typeof r.buildEnv === 'string' && r.buildEnv.trim() !== '');
   const validBuildItems =
     r.buildItems === undefined ||
     (Array.isArray(r.buildItems) && r.buildItems.every((x) => typeof x === 'string'));
