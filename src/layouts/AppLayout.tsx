@@ -7,7 +7,10 @@ const { Header, Content } = Layout;
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const selectedKey = location.pathname.startsWith('/settings') ? '/settings' : '/';
+  const isSettings = location.pathname.startsWith('/settings');
+  const selectedKey = isSettings ? '/settings' : '/';
+  // 需求记录页（瀑布流卡片）放开全屏宽度；系统配置页保留限宽，表单/表格全屏拉伸可读性差
+  const maxWidth = isSettings ? 1200 : undefined;
 
   return (
     <Layout style={{ minHeight: '100vh', background: '#f5f5f5' }}>
@@ -26,7 +29,7 @@ export default function AppLayout() {
         <div
           style={{
             width: '100%',
-            maxWidth: 1200,
+            maxWidth,
             display: 'flex',
             alignItems: 'center',
             gap: 32,
@@ -67,7 +70,7 @@ export default function AppLayout() {
         </div>
       </Header>
       <Content style={{ padding: '24px 16px' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+        <div style={{ maxWidth, margin: '0 auto' }}>
           <Outlet />
         </div>
       </Content>

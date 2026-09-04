@@ -1,16 +1,20 @@
 import { useMemo, useState } from 'react';
 import { App as AntdApp, Badge, Button, Card, Drawer, Empty, Space, Tag, Typography, Upload } from 'antd';
-import { BarChartOutlined, PlusOutlined, UploadOutlined, ContainerOutlined } from '@ant-design/icons';
+import { BarChartOutlined, PlusOutlined, UploadOutlined, ContainerOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { Requirement, SortMode, Status } from '../types';
 import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
 import { useDevopsApps, useBranches, useBuildPlan, useRequirements } from '../hooks/useWorkTracker';
 import { getDefaultBranch } from '../config/branches';
 import RequirementForm, { type RequirementFormValues } from '../components/RequirementForm';
-import RequirementTable from '../components/RequirementTable';
+import RequirementCardGrid from '../components/RequirementCardGrid';
+import BatchPanel from '../components/BatchPanel';
+import QuickBuildDrawer from '../components/QuickBuildDrawer';
 import StatsBar from '../components/StatsBar';
 import ProjectStatsModal from '../components/ProjectStatsModal';
 import FilterBar, { type FilterValue } from '../components/FilterBar';
-import { useBuildTasks, type BuildTaskPhase } from '../hooks/useBuildTasks';
+import { useBuildTasks, startBuildTask, type BuildTaskPhase } from '../hooks/useBuildTasks';
+import { getCsrfToken } from '../build';
+import { getBatchItems, type BuildTarget, type MrSkipped, type MrTarget } from '../batch';
 
 const INITIAL_FILTER: FilterValue = {
   statuses: [],
@@ -32,8 +36,14 @@ export default function RequirementListPage() {
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [quickBuildOpen, setQuickBuildOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
+
+  // 批量选择状态（与 buildItems 两套数据）：卡片勾选 + 面板 X 的临时排除
+  const [selectedReqIds, setSelectedReqIds] = useState<Set<string>>(new Set());
+  const [batchExcluded, setBatchExcluded] = useState<Record<string, string[]>>({});
+  const [batchBuilding, setBatchBuilding] = useState(false);
 
   const filtered = useMemo(() => {
     const kw = filter.keyword.trim().toLowerCase();
@@ -53,6 +63,12 @@ export default function RequirementListPage() {
     });
   }, [requirements, filter]);
 
+  /** 批量面板基于全量选中需求（不受当前筛选影响，防"幽灵选择"） */
+  const selectedReqs = useMemo(
+    () => requirements.filter((r) => selectedReqIds.has(r.id)),
+    [requirements, selectedReqIds],
+  );
+
   const statusOptions = useMemo(
     () => [...new Set(requirements.map((r) => r.status))],
     [requirements],
@@ -60,14 +76,14 @@ export default function RequirementListPage() {
 
   /**
    * 切换排序：发版时间排序为一次性真实重排数据（自动排），排完仍可继续手动拖拽；
-   * sortMode 仅作表头指示——手动拖拽后自动熄灭（见 handleReorder）
+   * sortMode 仅作工具行指示——手动拖拽后自动熄灭（见 handleReorder）
    */
   const handleChangeSortMode = (mode: SortMode) => {
     setSortMode(mode);
     if (mode !== 'manual') sortByReleaseDate(mode);
   };
 
-  /** 拖拽排序：数据重排 + 退出排序指示状态（表头恢复中性，表示当前为手动顺序） */
+  /** 拖拽排序：数据重排 + 退出排序指示状态（工具行恢复中性，表示当前为手动顺序） */
   const handleReorder = (activeId: string, overId: string) => {
     if (sortMode !== 'manual') setSortMode('manual');
     reorder(activeId, overId);
@@ -80,6 +96,121 @@ export default function RequirementListPage() {
         ? f.statuses.filter((s) => s !== status)
         : [...f.statuses, status],
     }));
+  };
+
+  /**
+   * 卡片勾选/取消（需求级批量选择）：
+   * 勾选卡片 = 该需求全部项目直接进入批量范围（不再依赖卡片内子勾选）；
+   * 勾选时清空该需求的临时排除（重新勾选 = 恢复全量参与）；取消时同步清空排除。
+   */
+  const handleToggleSelect = (reqId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedReqIds((s) => new Set(s).add(reqId));
+      setBatchExcluded((m) => {
+        if (!(reqId in m)) return m;
+        const next = { ...m };
+        delete next[reqId];
+        return next;
+      });
+    } else {
+      setSelectedReqIds((s) => {
+        const next = new Set(s);
+        next.delete(reqId);
+        return next;
+      });
+      setBatchExcluded((m) => {
+        if (!(reqId in m)) return m;
+        const next = { ...m };
+        delete next[reqId];
+        return next;
+      });
+    }
+  };
+
+  /**
+   * 批量面板 X 掉某项目（仅本次生效，不回写 buildItems）；
+   * 若该需求有效项清零 → 自动取消其卡片勾选并清空排除（用户拍板的联动规则）。
+   */
+  const handleRemoveItem = (reqId: string, itemId: string) => {
+    const req = requirements.find((r) => r.id === reqId);
+    if (!req) return;
+    setBatchExcluded((m) => {
+      const next = { ...m, [reqId]: [...(m[reqId] ?? []), itemId] };
+      // 判断移除后该需求是否还有有效项目
+      const remaining = getBatchItems(req, next).length;
+      if (remaining === 0) {
+        setSelectedReqIds((s) => {
+          const sel = new Set(s);
+          sel.delete(reqId);
+          return sel;
+        });
+        delete next[reqId];
+        message.info('该需求已无参与批量的项目，已自动取消勾选（卡片数据未改动）');
+      }
+      return next;
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedReqIds(new Set());
+    setBatchExcluded({});
+  };
+
+  /** 批量 MR：全量打开 GitLab 预填页（同步循环），清单链接兜底浏览器拦截 */
+  const handleBatchMr = (targets: MrTarget[], skipped: MrSkipped[]) => {
+    targets.forEach((t) => window.open(t.url, '_blank', 'noreferrer'));
+    if (targets.length > 0) {
+      message.success(`已打开 ${targets.length} 个 MR 页面，如被浏览器拦截请从上方清单逐个点击打开`);
+    }
+    if (skipped.length > 0) {
+      message.warning(`已跳过 ${skipped.length} 项：${skipped.map((s) => `【${s.project}】${s.reason}`).join('；')}`);
+    }
+  };
+
+  /** 批量构建：去重后逐个并入全局构建任务队列，汇总提示 */
+  const handleBatchBuild = async (builds: BuildTarget[], dupCount: number) => {
+    if (!getCsrfToken()) {
+      message.warning('未登录运维平台，请先登录后再构建');
+      return;
+    }
+    setBatchBuilding(true);
+    try {
+      // 任务名合并展示来源需求（如"需求A、需求B"），复用任务 store 的轮询/重试/取消
+      const results = await Promise.all(
+        builds.map((b) => startBuildTask(b.reqNames.join('、'), b.project, b.env)),
+      );
+      let okCount = 0;
+      const fails: string[] = [];
+      let authFailed = false;
+      results.forEach((r, i) => {
+        const app = builds[i].project;
+        if (r.ok) {
+          okCount += 1;
+        } else if (r.status === 401 || r.status === 403) {
+          authFailed = true;
+        } else if (r.detail === '已取消') {
+          // 用户主动取消，不额外提示
+        } else {
+          fails.push(`【${app}】${r.detail}`);
+        }
+      });
+      if (authFailed) {
+        message.error('登录态已失效，请重新登录运维平台');
+        return;
+      }
+      if (fails.length > 0) {
+        message.error(`构建失败：${fails.join('；')}`);
+        if (okCount > 0) message.success(`成功触发 ${okCount} 个项目构建`);
+        return;
+      }
+      if (okCount > 0) {
+        message.success(
+          `已触发 ${okCount} 个构建${dupCount > 0 ? `（合并去重 ${dupCount} 个）` : ''}，可在「构建任务」查看进度`,
+        );
+      }
+    } finally {
+      setBatchBuilding(false);
+    }
   };
 
   const openCreateForm = () => {
@@ -99,7 +230,7 @@ export default function RequirementListPage() {
 
   const handleSubmit = (values: RequirementFormValues) => {
     const isEdit = upsert(editing?.id ?? null, values);
-    // 编辑保存后状态变为「已发布」，同样沉到尾部已发布区最前（与表格行内切换行为一致）
+    // 编辑保存后状态变为「已发布」，同样沉到尾部已发布区最前（与卡片内切换行为一致）
     if (editing && editing.status !== '已发布' && values.status === '已发布') {
       moveToPublishedTop(editing.id);
       message.info('已发布的需求已自动沉底');
@@ -119,6 +250,18 @@ export default function RequirementListPage() {
 
   const handleDelete = (id: string) => {
     remove(id);
+    // 同步清掉批量选择与临时排除，避免残留
+    setSelectedReqIds((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+    setBatchExcluded((m) => {
+      if (!(id in m)) return m;
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
     message.success('已删除');
   };
 
@@ -212,8 +355,11 @@ export default function RequirementListPage() {
           >
             <Button icon={<UploadOutlined />}>导入数据</Button>
           </Upload>
-          <Button onClick={handleExportAll}>导出全部</Button>
+          <Button onClick={handleExportAll}>导出数据</Button>
           <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
+          <Button icon={<ThunderboltOutlined />} onClick={() => setQuickBuildOpen(true)}>
+            快速构建
+          </Button>
           <Badge count={activeCount} size="small" offset={[-2, 2]}>
             <Button
               icon={<ContainerOutlined />}
@@ -244,7 +390,7 @@ export default function RequirementListPage() {
           type="text"
           icon={<BarChartOutlined />}
           onClick={() => setStatsOpen(true)}
-          style={{ flexShrink: 0, color: '#1677ff' }}
+          style={{ flexShrink: 0 }}
         >
           统计项目
         </Button>
@@ -257,11 +403,26 @@ export default function RequirementListPage() {
         apps={devopsApps.apps}
       />
 
-      <RequirementTable
+      {/* 批量操作区：选中需求 > 0 时显示（上半汇总去重 + 下半逐需求 X 排除） */}
+      <BatchPanel
+        reqs={selectedReqs}
+        apps={devopsApps.apps}
+        buildPlan={buildPlan}
+        excluded={batchExcluded}
+        onRemoveItem={handleRemoveItem}
+        onClearSelection={handleClearSelection}
+        onBatchMr={handleBatchMr}
+        onBatchBuild={handleBatchBuild}
+        batchBuilding={batchBuilding}
+      />
+
+      <RequirementCardGrid
         data={filtered}
         apps={devopsApps.apps}
         branches={branches}
         buildPlan={buildPlan}
+        selectedReqIds={selectedReqIds}
+        onToggleSelect={handleToggleSelect}
         onEdit={openEditForm}
         onDelete={handleDelete}
         onChangeStatus={handleStatusChange}
@@ -284,6 +445,13 @@ export default function RequirementListPage() {
         open={statsOpen}
         requirements={filtered}
         onClose={() => setStatsOpen(false)}
+      />
+
+      <QuickBuildDrawer
+        open={quickBuildOpen}
+        onClose={() => setQuickBuildOpen(false)}
+        branches={branches}
+        apps={devopsApps.apps}
       />
 
       <Drawer
