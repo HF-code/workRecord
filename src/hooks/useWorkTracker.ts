@@ -1,14 +1,110 @@
 import { useEffect, useState } from 'react';
 import type { Requirement } from '../types';
-import { loadProjects, loadRequirements, saveProjects, saveRequirements } from '../storage';
+import type { DevopsApp } from '../config/devopsApps';
+import type { BranchConfig } from '../config/branches';
+import { DEFAULT_BRANCHES } from '../config/branches';
+import type { BuildEnv } from '../build';
+import {
+  loadBranches,
+  loadDevopsApps,
+  loadDevopsSyncedAt,
+  loadRequirements,
+  migrateLegacyBuildPlan,
+  saveBranches,
+  saveDevopsApps,
+  saveDevopsSyncedAt,
+  saveRequirements,
+} from '../storage';
 import type { RequirementFormValues } from '../components/RequirementForm';
 
+/** 生成 UUID，兼容不支持 crypto.randomUUID 的环境（如 file:// 或非安全上下文） */
+function genId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** 数组内移动元素（from 移到 to），索引非法或相同则返回原数组引用 */
+function arrayMove<T>(list: T[], from: number, to: number): T[] {
+  if (from < 0 || to < 0 || from === to || from >= list.length || to >= list.length) return list;
+  const next = list.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
 export function useRequirements() {
-  const [requirements, setRequirements] = useState<Requirement[]>(() => loadRequirements());
+  const [requirements, setRequirements] = useState<Requirement[]>(() => {
+    migrateLegacyBuildPlan();
+    return loadRequirements();
+  });
 
   useEffect(() => {
     saveRequirements(requirements);
   }, [requirements]);
+
+  /** 拖拽排序：把 activeId 行移动到 overId 行的位置（在完整列表上重排，兼容筛选视图内拖拽） */
+  const reorder = (activeId: string, overId: string) => {
+    setRequirements((list) =>
+      arrayMove(
+        list,
+        list.findIndex((r) => r.id === activeId),
+        list.findIndex((r) => r.id === overId),
+      ),
+    );
+  };
+
+  /**
+   * 一次性按发版时间自动重排（真实改动数据顺序并持久化，之后可继续手动拖拽微调）：
+   * 未发布在前、已发布在后（保持"已发布沉底"不变量），各组内按发版时间排，无发版时间垫底。
+   * sort 为稳定排序，同日期保持原有相对顺序。
+   */
+  const sortByReleaseDate = (mode: 'releaseDesc' | 'releaseAsc') => {
+    setRequirements((list) => {
+      const dated = list.filter((r): r is Requirement & { releaseDate: string } => r.releaseDate !== null);
+      const undated = list.filter((r) => r.releaseDate === null);
+      // releaseDate 为 'YYYY-MM-DD'，字符串比较即日期比较
+      dated.sort((a, b) =>
+        mode === 'releaseDesc'
+          ? b.releaseDate.localeCompare(a.releaseDate)
+          : a.releaseDate.localeCompare(b.releaseDate),
+      );
+      const sorted = [...dated, ...undated];
+      // 未发布在前、已发布在后
+      return [...sorted.filter((r) => r.status !== '已发布'), ...sorted.filter((r) => r.status === '已发布')];
+    });
+  };
+
+  /**
+   * 状态切为「已发布」时沉底：从列表末尾往前找第一条非已发布的需求，
+   * 插到它后面（即尾部连续「已发布」区的最前面）。
+   * 不能用"第一条已发布之前"定位——已发布可能被手动拖拽到前面，
+   * 只有从末尾往前数的连续已发布段才是真正的"沉底区"。
+   */
+  const moveToPublishedTop = (id: string) => {
+    setRequirements((list) => {
+      const from = list.findIndex((r) => r.id === id);
+      if (from < 0) return list;
+      // 从末尾往前找最后一条非已发布（此时自身状态已更新为已发布，扫描会跳过自己）
+      let anchor = -1;
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].status !== '已发布') {
+          anchor = i;
+          break;
+        }
+      }
+      // 插入位置 = anchor 之后；全是已发布（anchor = -1）则插到最前
+      const insertAt = anchor + 1;
+      // arrayMove 是"先删后插"：from 在 insertAt 之前时，删除后目标位置会前移 1
+      const to = from < insertAt ? insertAt - 1 : insertAt;
+      return arrayMove(list, from, to);
+    });
+  };
 
   const update = (id: string, patch: Partial<Requirement>) => {
     setRequirements((list) =>
@@ -19,17 +115,24 @@ export function useRequirements() {
   /** 新增或保存编辑，返回是否为编辑 */
   const upsert = (editingId: string | null, values: RequirementFormValues): boolean => {
     const items = values.items.map((it) => ({
-      id: it.id ?? crypto.randomUUID(),
+      id: it.id ?? genId(),
       project: it.project,
       branch: it.branch,
     }));
     if (editingId) {
-      update(editingId, { ...values, items });
+      const existing = requirements.find((r) => r.id === editingId);
+      // buildEnv 以表单提交值为准（表单回填了原值，用户可改），缺省兜底旧值
+      update(editingId, {
+        ...values,
+        items,
+        buildEnv: values.buildEnv ?? existing?.buildEnv,
+        buildItems: existing?.buildItems,
+      });
       return true;
     }
     const now = new Date().toISOString();
     setRequirements((list) => [
-      { id: crypto.randomUUID(), ...values, items, createdAt: now, updatedAt: now },
+      { id: genId(), ...values, items, createdAt: now, updatedAt: now },
       ...list,
     ]);
     return false;
@@ -56,24 +159,106 @@ export function useRequirements() {
     return fresh;
   };
 
-  return { requirements, upsert, update, remove, removeMany, merge };
+  return { requirements, upsert, update, remove, removeMany, merge, reorder, moveToPublishedTop, sortByReleaseDate };
 }
 
-export function useProjects() {
-  const [projects, setProjects] = useState<string[]>(() => loadProjects());
+export function useDevopsApps() {
+  const [apps, setApps] = useState<DevopsApp[]>(() => loadDevopsApps());
+  const [syncedAt, setSyncedAt] = useState<string | null>(() => loadDevopsSyncedAt());
 
   useEffect(() => {
-    saveProjects(projects);
-  }, [projects]);
+    saveDevopsApps(apps);
+  }, [apps]);
 
-  const add = (name: string) => {
-    setProjects((list) => (list.includes(name) ? list : [...list, name]));
+  /** 新增项目，app 名重复返回 false */
+  const add = (app: DevopsApp): boolean => {
+    if (apps.some((a) => a.app === app.app)) return false;
+    setApps((list) => [...list, app]);
+    return true;
   };
 
-  /** 合并一批项目名（去重） */
-  const merge = (names: string[]) => {
-    setProjects((list) => [...new Set([...list, ...names])]);
+  const remove = (appName: string) => {
+    setApps((list) => list.filter((a) => a.app !== appName));
   };
 
-  return { projects, setProjects, add, merge };
+  const update = (appName: string, patch: Partial<DevopsApp>) => {
+    setApps((list) => list.map((a) => (a.app === appName ? { ...a, ...patch } : a)));
+  };
+
+  /**
+   * 同步合并：按 app 去重——远端新应用追加；两端都有保留本地 gitUrl、刷新 alias/group；
+   * 本地有而远端无的保留（可能是手动新增）。返回新增数量。
+   */
+  const mergeSynced = (remote: DevopsApp[]): number => {
+    const existing = new Map(apps.map((a) => [a.app, a]));
+    const fresh = remote.filter((a) => !existing.has(a.app));
+    setApps([
+      ...apps.map((local) => {
+        const r = remote.find((a) => a.app === local.app);
+        return r ? { ...local, alias: r.alias, group: r.group } : local;
+      }),
+      ...fresh,
+    ]);
+    const now = new Date().toISOString();
+    setSyncedAt(now);
+    saveDevopsSyncedAt(now);
+    return fresh.length;
+  };
+
+  return { apps, syncedAt, add, remove, update, mergeSynced };
+}
+
+export function useBranches() {
+  const [branches, setBranches] = useState<BranchConfig[]>(() => loadBranches());
+
+  useEffect(() => {
+    saveBranches(branches);
+  }, [branches]);
+
+  /** 保存整个分支列表（用于配置页的增删改与排序） */
+  const save = (list: BranchConfig[]) => {
+    setBranches(list);
+  };
+
+  /** 恢复默认数据（真正重置为 DEFAULT_BRANCHES，而非重读 localStorage 旧值） */
+  const reset = () => {
+    setBranches(DEFAULT_BRANCHES);
+  };
+
+  return { branches, save, reset };
+}
+
+/** 构建计划：复用每条需求上的 buildEnv / buildItems 字段（与需求列表同表存储） */
+export function useBuildPlan(update: (id: string, patch: Partial<Requirement>) => void, defaultBranch: BuildEnv) {
+  /** 取某需求的目标分支（整需求共用），缺省为全局默认分支 */
+  const getEnv = (req: Requirement): BuildEnv => {
+    return req.buildEnv ?? defaultBranch;
+  };
+
+  const setEnv = (req: Requirement, env: BuildEnv) => {
+    update(req.id, { buildEnv: env });
+  };
+
+  /** 取某需求勾选的项目 itemId 集合；未记录过（undefined）视为全选 */
+  const getSelected = (req: Requirement): Set<string> => {
+    if (req.buildItems === undefined) return new Set(req.items.map((it) => it.id));
+    return new Set(req.buildItems);
+  };
+
+  const setSelectedFor = (req: Requirement, itemIds: string[]) => {
+    update(req.id, { buildItems: itemIds });
+  };
+
+  const toggleItem = (req: Requirement, itemId: string, checked: boolean) => {
+    const cur = getSelected(req);
+    if (checked) cur.add(itemId);
+    else cur.delete(itemId);
+    setSelectedFor(req, [...cur]);
+  };
+
+  const toggleAll = (req: Requirement, checked: boolean) => {
+    setSelectedFor(req, checked ? req.items.map((it) => it.id) : []);
+  };
+
+  return { getEnv, setEnv, getSelected, toggleItem, toggleAll };
 }

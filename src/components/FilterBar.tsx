@@ -1,11 +1,15 @@
 import { DatePicker, Input, Select, Space } from 'antd';
+
+const { RangePicker } = DatePicker;
 import dayjs from 'dayjs';
 import type { Status } from '../types';
+import type { DevopsApp } from '../config/devopsApps';
+import { projectLabel } from './ProjectSelect';
 
 export interface FilterValue {
   statuses: Status[];
   project?: string;
-  releaseDate: string | null;
+  releaseDateRange: [string, string] | null; // ['YYYY-MM-DD', 'YYYY-MM-DD']
   keyword: string;
 }
 
@@ -13,10 +17,10 @@ interface Props {
   value: FilterValue;
   onChange: (value: FilterValue) => void;
   statusOptions: Status[];
-  projectOptions: string[];
+  apps: DevopsApp[];
 }
 
-export default function FilterBar({ value, onChange, statusOptions, projectOptions }: Props) {
+export default function FilterBar({ value, onChange, statusOptions, apps }: Props) {
   const patch = (p: Partial<FilterValue>) => onChange({ ...value, ...p });
 
   return (
@@ -34,18 +38,33 @@ export default function FilterBar({ value, onChange, statusOptions, projectOptio
       <Select
         allowClear
         showSearch
+        optionFilterProp="label"
         placeholder="项目筛选"
-        style={{ minWidth: 180 }}
+        style={{ minWidth: 220 }}
         value={value.project}
         onChange={(project) => patch({ project })}
-        options={projectOptions.map((p) => ({ label: p, value: p }))}
+        options={apps.map((a) => ({ label: projectLabel(a), value: a.app }))}
       />
-      <DatePicker
+      <RangePicker
         allowClear
-        placeholder="按发版日期筛选"
-        value={value.releaseDate ? dayjs(value.releaseDate) : null}
-        onChange={(d) => patch({ releaseDate: d ? d.format('YYYY-MM-DD') : null })}
-        presets={[{ label: '今天', value: dayjs() }]}
+        placeholder={['发版日期起', '发版日期止']}
+        value={
+          value.releaseDateRange
+            ? [dayjs(value.releaseDateRange[0]), dayjs(value.releaseDateRange[1])]
+            : null
+        }
+        onChange={(dates) =>
+          patch({
+            releaseDateRange: dates
+              ? [dates[0]!.format('YYYY-MM-DD'), dates[1]!.format('YYYY-MM-DD')]
+              : null,
+          })
+        }
+        presets={[
+          { label: '今天', value: [dayjs(), dayjs()] },
+          { label: '近一周', value: [dayjs().subtract(6, 'day'), dayjs()] },
+          { label: '近一月', value: [dayjs().subtract(1, 'month'), dayjs()] },
+        ]}
       />
       <Input.Search
         allowClear

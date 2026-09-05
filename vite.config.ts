@@ -15,19 +15,16 @@ export default defineConfig(({ mode }) => ({
   },
 
   server: {
+    // 监听所有网卡，允许通过局域网 IP（如 192.168.x.x:5173）访问
+    host: true,
     proxy: {
+      // 转发到本地后端（mywork-server，默认 8080），由本地后端再转发到 devops.vzan.com。
+      // 通过本地后端中转，便于统一注入 CSRF/Origin、透传 cookie，并支持后续扩展。
+      // 如需直连远程 devops，可改回 target: 'https://devops.vzan.com' 并恢复下方 headers/cookieDomainRewrite。
       '/devops-api': {
-        target: 'https://devops.vzan.com',
+        target: 'http://localhost:8080',
         changeOrigin: true,
         secure: true,
-        rewrite: (p) => p.replace(/^\/devops-api/, ''),
-        // 浏览器自动带 Origin: http://localhost:5173，Django CSRF 会拒绝，需改写为 devops 域
-        headers: {
-          Origin: 'https://devops.vzan.com',
-          Referer: 'https://devops.vzan.com/',
-        },
-        // 响应 Set-Cookie 的 Domain 改写为 localhost，否则浏览器拒收
-        cookieDomainRewrite: { 'devops.vzan.com': 'localhost' },
       },
     },
   },

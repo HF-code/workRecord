@@ -1,3 +1,5 @@
+import type { BuildEnv } from './build';
+
 export const STATUSES = [
   '开发中',
   '已提测',
@@ -12,6 +14,10 @@ export const STATUSES = [
 
 export type Status = (typeof STATUSES)[number];
 
+export const VERSIONS = ['大版', '独立'] as const;
+
+export type Version = (typeof VERSIONS)[number];
+
 export interface ProjectBranch {
   id: string;
   project: string;
@@ -25,6 +31,12 @@ export interface Requirement {
   items: ProjectBranch[];
   status: Status;
   releaseDate: string | null; // 'YYYY-MM-DD'
+  version?: Version; // 旧数据可能无此字段，缺省视为 '大版'
+  remark?: string;
+  /** 构建目标分支（整需求共用），缺省视为系统配置默认分支 */
+  buildEnv?: BuildEnv;
+  /** 参与构建的项目 itemId 列表，缺省视为全部项目 */
+  buildItems?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -40,3 +52,6 @@ export const STATUS_COLORS: Record<Status, string> = {
   线上验证中: 'cyan',
   已发布: 'default',
 };
+
+/** 列表视图排序模式：手动拖拽顺序 / 发版时间降序（新→旧）/ 发版时间升序（旧→新） */
+export type SortMode = 'manual' | 'releaseDesc' | 'releaseAsc';

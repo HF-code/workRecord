@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>内部交付协作平台 · 交互原型</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#fff; --line:#e6e8eb; --txt:#1f2329;
+    --sub:#646a73; --brand:#2f6bff; --brand-soft:#eaf1ff;
+    --green:#16a34a; --amber:#d97706; --red:#dc2626; --gray:#94a3b8;
+    --chip:#eef1f5;
+  }
+  *{box-sizing:border-box;font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
+  .topbar{height:52px;background:#1f2329;color:#fff;display:flex;align-items:center;padding:0 16px;gap:16px;position:sticky;top:0;z-index:20}
+  .topbar .logo{font-weight:700;letter-spacing:.5px}
+  .topbar .nav{display:flex;gap:4px;margin-left:8px}
+  .topbar .nav button{background:transparent;color:#cfd3d8;border:none;padding:7px 12px;border-radius:6px;cursor:pointer;font-size:13px}
+  .topbar .nav button.active{background:#3a3f47;color:#fff}
+  .topbar .role{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:#cfd3d8}
+  .topbar .role select{background:#3a3f47;color:#fff;border:none;border-radius:6px;padding:5px 8px}
+  .wrap{display:flex;gap:0;max-width:1180px;margin:0 auto}
+  .stage{flex:1;padding:20px 24px;min-height:70vh}
+  .page-title{font-size:18px;font-weight:700;margin:0 0 4px}
+  .page-desc{color:var(--sub);margin:0 0 16px;font-size:13px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .btn{background:var(--brand);color:#fff;border:none;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px}
+  .btn.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+  .btn.gray{background:var(--chip);color:var(--txt)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .search{background:#fff;border:1px solid var(--line);border-radius:6px;padding:7px 10px;min-width:200px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  th{color:var(--sub);font-weight:600;background:#fafbfc}
+  tr:hover td{background:#fafbff}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
+  .tag.dev{background:var(--brand-soft);color:var(--brand)}
+  .tag.test{background:#fff1e6;color:var(--amber)}
+  .tag.prod{background:#e9f9ef;color:var(--green)}
+  .status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%}
+  .s-todo{color:var(--gray)} .s-todo .dot{background:var(--gray)}
+  .s-building{color:var(--amber)} .s-building .dot{background:var(--amber)}
+  .s-ready{color:var(--brand)} .s-ready .dot{background:var(--brand)}
+  .s-testing{color:#7c3aed} .s-testing .dot{background:#7c3aed}
+  .s-done{color:var(--green)} .s-done .dot{background:var(--green)}
+  .subdev{border:1px dashed var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#fcfcfd}
+  .subdev .meta{display:flex;gap:14px;flex-wrap:wrap;color:var(--sub);font-size:12px;margin-top:4px}
+  .kv{display:flex;gap:6px;align-items:center}
+  .kv b{color:var(--txt)}
+  .stepper{display:flex;align-items:center;gap:0;margin:14px 0}
+  .step{flex:1;display:flex;flex-direction:column;align-items:center;position:relative}
+  .step .circle{width:26px;height:26px;border-radius:50%;background:var(--chip);color:var(--sub);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;z-index:2}
+  .step.done .circle{background:var(--brand);color:#fff}
+  .step.active .circle{background:var(--amber);color:#fff}
+  .step .lbl{margin-top:6px;font-size:12px;color:var(--sub)}
+  .step.active .lbl{color:var(--txt);font-weight:600}
+  .step:not(:last-child)::after{content:"";position:absolute;top:13px;left:50%;width:100%;height:2px;background:var(--line);z-index:1}
+  .step.done:not(:last-child)::after{background:var(--brand)}
+  .log{font-size:12px;color:var(--sub);border-left:2px solid var(--line);padding-left:10px;margin:6px 0}
+  .log b{color:var(--txt)}
+  .report{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px}
+  .report h4{margin:0 0 6px;font-size:13px;display:flex;align-items:center;gap:8px}
+  .report .who{font-size:11px;color:#fff;background:var(--brand);padding:1px 7px;border-radius:10px}
+  .report .who.test{background:var(--amber)}
+  .report ul{margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--sub)}
+  .pill{font-size:11px;padding:1px 8px;border-radius:10px;background:var(--chip);color:var(--sub)}
+  .bigver{display:flex;gap:10px;flex-wrap:wrap}
+  .bigver .item{flex:1;min-width:150px;border:1px solid var(--line);border-radius:8px;padding:12px}
+  .bigver .item .n{font-size:22px;font-weight:700}
+  .aside{width:300px;background:#fff;border-left:1px solid var(--line);padding:18px}
+  .aside h3{font-size:13px;color:var(--sub);margin:0 0 10px;text-transform:uppercase;letter-spacing:.5px}
+  .perm{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px}
+  .perm .role{font-weight:700;font-size:13px}
+  .perm ul{margin:6px 0 0;padding-left:16px;font-size:12px;color:var(--sub)}
+  .note{background:#fffbe6;border:1px solid #ffe58f;border-radius:8px;padding:10px 12px;font-size:12px;color:#854d0e;margin-bottom:14px}
+  .hidden{display:none!important}
+  .mock-bar{background:var(--brand-soft);color:var(--brand);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">⬡ 交付协作平台</div>
+  <div class="nav" id="nav">
+    <button data-tab="list" class="active">需求列表</button>
+    <button data-tab="detail">需求详情</button>
+    <button data-tab="bigver">大版统计</button>
+    <button data-tab="perm">角色权限</button>
+    <button data-tab="ai">AI 报告</button>
+  </div>
+  <div class="role">当前视角：
+    <select id="roleSel">
+      <option value="dev">开发</option>
+      <option value="test">测试</option>
+      <option value="product">产品</option>
+      <option value="manager">管理者</option>
+    </select>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="stage" id="stage"></div>
+  <div class="aside" id="aside"></div>
+</div>
+
+<script>
+const $ = (s,r=document)=>r.querySelector(s);
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+
+/* ---------- 数据 ---------- */
+const reqs = [
+  {id:'REQ-1024', name:'购物车凑单优惠展示', tapd:'tapd.cc/1024', version:'V3.2 大版', status:'ready',
+   devs:[
+     {who:'张三(前端)', proj:'mall-web', branch:'feature/cart-tip', mr:'!318', state:'merged'},
+     {who:'李四(后端)', proj:'mall-api', branch:'feature/cart-discount', mr:'!512', state:'merged'},
+     {who:'王五(后端)', proj:'promo-svc', branch:'feature/promo-rule', mr:'!77', state:'merged'},
+   ], build:'构建完成 #BUILD-8841', ai:true},
+  {id:'REQ-1025', name:'订单详情物流轨迹优化', tapd:'tapd.cc/1025', version:'V3.2 大版', status:'building',
+   devs:[
+     {who:'赵六(前端)', proj:'mall-web', branch:'feature/logistics', mr:'!319', state:'merging'},
+   ], build:'构建中 62%', ai:false},
+  {id:'REQ-1026', name:'会员积分商城接入', tapd:'tapd.cc/1026', version:'独立版本', status:'testing',
+   devs:[
+     {who:'张三(前端)', proj:'point-web', branch:'feature/point-mall', mr:'!320', state:'merged'},
+     {who:'钱七(后端)', proj:'point-api', branch:'feature/point-exchange', mr:'!90', state:'merged'},
+   ], build:'构建完成 #BUILD-8840', ai:true},
+  {id:'REQ-1027', name:'搜索结果千人千面', tapd:'tapd.cc/1027', version:'V3.2 大版', status:'done',
+   devs:[
+     {who:'李四(后端)', proj:'search-svc', branch:'feature/rec-rank', mr:'!515', state:'merged'},
+   ], build:'构建完成 #BUILD-8830', ai:true},
+];
+
+const statusMeta = {
+  todo:{cls:'s-todo',txt:'待提测'},
+  building:{cls:'s-building',txt:'构建中'},
+  ready:{cls:'s-ready',txt:'待发布测试'},
+  testing:{cls:'s-testing',txt:'测试中'},
+  done:{cls:'s-done',txt:'已发布'},
+};
+function statusTag(s){const m=statusMeta[s];return `<span class="status ${m.cls}"><span class="dot"></span>${m.txt}</span>`}
+
+/* ---------- 渲染：列表 ---------- */
+function renderList(){
+  const role = $('#roleSel').value;
+  $('#stage').innerHTML = `
+    <h1 class="page-title">需求列表</h1>
+    <p class="page-desc">所有需求统一登记，按版本聚合；开发看到自己参与的，测试看到待发布/测试的，产品看到全部。</p>
+    <div class="toolbar">
+      <input class="search" placeholder="搜索需求名 / ID / 开发分支">
+      ${role==='product'
+        ? `<button class="btn" onclick="sim('打开新建需求表单：需求名 / TAPD / 归属版本')">+ 新建需求</button>`
+        : `<button class="btn" disabled title="仅产品可新建需求">+ 新建需求</button>`}
+      <span class="pill">当前视角：${roleName(role)}</span>
+      <span class="pill">${role==='product'?'可新建需求':'无新建权限'}</span>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>需求</th><th>版本</th><th>参与开发 / 分支</th><th>构建产物</th><th>状态</th><th></th></tr></thead>
+        <tbody>
+        ${reqs.map(r=>`
+          <tr>
+            <td><b>${r.name}</b><br><span class="pill">${r.id}</span> <a style="color:var(--brand);font-size:12px" href="#">${r.tapd.split('/')[0]}</a></td>
+            <td>${r.version}</td>
+            <td>${r.devs.map(d=>`${d.who}<br><span style="color:var(--sub);font-size:12px">${d.proj} · ${d.branch}</span>`).join('<hr style="border:none;border-top:1px dashed var(--line);margin:4px 0">')}</td>
+            <td><span style="font-size:12px">${r.build}</span></td>
+            <td>${statusTag(r.status)}</td>
+            <td><button class="btn ghost" onclick="goto('detail','${r.id}')">查看</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  renderAsideList(role);
+}
+
+/* ---------- 渲染：详情 ---------- */
+function renderDetail(id){
+  const r = reqs.find(x=>x.id===id) || reqs[0];
+  const role = $('#roleSel').value;
+  const steps = [
+    {k:'todo',t:'待提测'},{k:'building',t:'合并/构建'},{k:'ready',t:'待发布测试'},
+    {k:'testing',t:'测试中'},{k:'done',t:'已发布'}
+  ];
+  const order=['todo','building','ready','testing','done'];
+  const cur = order.indexOf(r.status);
+  $('#stage').innerHTML = `
+    <div class="mock-bar"><span>原型演示：以下按钮为模拟交互，仅展示流程形态</span><button class="btn ghost" onclick="goto('list')">← 返回列表</button></div>
+    <h1 class="page-title">${r.name}</h1>
+    <p class="page-desc">${r.id} · ${r.version} · <a style="color:var(--brand)" href="#">${r.tapd}</a></p>
+    <div class="card">
+      <div class="stepper">
+        ${steps.map((s,i)=>`<div class="step ${i<cur?'done':''} ${i===cur?'active':''}"><div class="circle">${i<cur?'✓':i+1}</div><div class="lbl">${s.t}</div></div>`).join('')}
+      </div>
+      <div class="row" style="margin-top:8px">
+        ${role==='dev' && r.status==='todo' ? `<button class="btn" onclick="sim('提交提测 → 自动建MR + 触发构建（不发布）')">提交提测</button>`
+          : role==='dev' ? `<span class="pill">开发操作：提交提测（当前状态不可执行）</span>`:''}
+        ${role==='test' && r.status==='ready' ? `<button class="btn" onclick="sim('发布到测试环境 → 状态转「测试中」')">发布到测试环境</button>`
+          : role==='test' && r.status!=='ready' && r.status!=='testing' ? `<span class="pill">测试操作：发布 / 测试通过（待构建完成）</span>`:''}
+        ${role==='test' && r.status==='testing' ? `<button class="btn ghost" onclick="sim('测试通过 → 流转预发布')">测试通过</button>`:''}
+        ${role==='manager' && r.status==='testing' ? `<button class="btn" onclick="sim('管理者审批上线 → 触发构建线上制品')">审批上线</button>`
+          : role==='manager' ? `<span class="pill">管理者操作：上线审批（待测试通过）</span>`:''}
+        ${['product'].includes(role) ? `<span class="pill">产品：可编辑需求信息</span>`:''}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">参与开发（各自填写项目与分支）</h3>
+      ${r.devs.map(d=>`
+        <div class="subdev">
+          <div class="kv"><b>${d.who}</b> ${d.mr?`<span class="pill">MR ${d.mr} · ${d.state==='merged'?'已合并':'合并中'}</span>`:''}</div>
+          <div class="meta">
+            <span>项目：<b>${d.proj}</b></span>
+            <span>开发分支：<b>${d.branch}</b></span>
+          </div>
+        </div>`).join('')}
+      ${role==='dev'?`<button class="btn gray" onclick="sim('填写：项目名 + 开发分支 → 保存为该需求的子开发条目')">+ 添加我的项目与分支</button>`
+        : `<span class="pill">仅参与开发的成员可添加自己的项目与分支</span>`}
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 6px">操作记录（全流程留痕）</h3>
+      <div class="log"><b>王五</b> 提交提测 · 自动创建 MR !77 · 2026-08-23 10:12</div>
+      <div class="log"><b>系统</b> 合并完成，触发运维平台构建 #BUILD-8841 · 10:14</div>
+      <div class="log"><b>李四</b> 构建完成，待测试发布 · 10:21</div>
+    </div>
+
+    ${r.ai?`<div class="card"><h3 style="margin:0 0 6px">AI 报告（提测后自动生成，见「AI 报告」页）</h3>
+      <span class="pill">代码 Review 报告 · 已生成</span> <span class="pill">影响范围报告 · 已生成</span></div>`:''}
+  `;
+  renderAsideDetail(r, role);
+}
+
+/* ---------- 渲染：大版统计 ---------- */
+function renderBigver(){
+  $('#stage').innerHTML = `
+    <h1 class="page-title">大版统计 · V3.2</h1>
+    <p class="page-desc">大版日要发哪些需求，系统自动汇总，不再靠测试手工记录、群内发通知。</p>
+    <div class="note">当前痛点：大版需求全靠测试自己记录、大版日发通知；开发靠记忆回忆"哪些是我的、含哪些项目分支"。本页由系统自动生成，解决"谨慎回忆"。</div>
+    <div class="bigver">
+      <div class="item"><div class="n">4</div><div style="color:var(--sub);font-size:12px">V3.2 大版需求数</div></div>
+      <div class="item"><div class="n">7</div><div style="color:var(--sub);font-size:12px">涉及子开发条目</div></div>
+      <div class="item"><div class="n">5</div><div style="color:var(--sub);font-size:12px">关联代码仓库</div></div>
+      <div class="item"><div class="n">3</div><div style="color:var(--sub);font-size:12px">待发布测试</div></div>
+    </div>
+    <div class="card" style="padding:0;margin-top:14px">
+      <table><thead><tr><th>需求</th><th>开发归属（自动聚合）</th><th>状态</th><th>大版动作</th></tr></thead>
+      <tbody>
+      ${reqs.filter(r=>r.version.includes('V3.2')).map(r=>`
+        <tr><td><b>${r.name}</b><br><span class="pill">${r.id}</span></td>
+        <td>${r.devs.map(d=>`${d.who}<br><span style="color:var(--sub);font-size:12px">${d.proj}·${d.branch}</span>`).join('<hr style="border:none;border-top:1px dashed var(--line);margin:3px 0">')}</td>
+        <td>${statusTag(r.status)}</td>
+        <td><button class="btn ghost" onclick="goto('detail','${r.id}')">详情</button></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="toolbar" style="margin-top:14px"><button class="btn">生成大版发布清单（一键通知）</button></div>`;
+  renderAsideBigver();
+}
+
+/* ---------- 渲染：角色权限 ---------- */
+function renderPerm(){
+  $('#stage').innerHTML = `
+    <h1 class="page-title">角色与权限</h1>
+    <p class="page-desc">产品、开发、测试职责在系统里清晰划分；管理者拥有上线审批权。不再依赖"谁有 GitLab 权限谁就点"。</p>
+    <div class="card" style="padding:0">
+      <table><thead><tr><th>角色</th><th>核心职责</th><th>平台权限</th></tr></thead><tbody>
+        <tr><td><span class="tag prod">产品</span></td><td>需求登记、归版本、指派</td><td>新建/编辑需求、按版本聚合查看</td></tr>
+        <tr><td><span class="tag dev">开发</span></td><td>填项目分支、提交提测</td><td>添加子开发条目、提交提测（系统自动 MR+构建）</td></tr>
+        <tr><td><span class="tag test">测试</span></td><td>发布测试、标记通过</td><td>查看已构建制品、发布到测试环境、测试通过</td></tr>
+        <tr><td><b>管理者</b></td><td>上线审批、留痕审计</td><td>预发布/大版上线审批、查看全量操作日志</td></tr>
+      </tbody></table>
+    </div>`;
+  renderAsidePerm();
+}
+
+/* ---------- 渲染：AI 报告 ---------- */
+function renderAI(){
+  $('#stage').innerHTML = `
+    <h1 class="page-title">AI 报告中心</h1>
+    <p class="page-desc">提测 / 测试通过 / 发布后，系统自动产出报告，把人肉复盘转为自动生成。</p>
+    <div class="report">
+      <h4>REQ-1024 代码 Review 报告 <span class="who">给开发</span></h4>
+      <ul><li>⚠️ cart-tip 组件未做空态处理，凑单人数为 0 时可能白屏</li>
+        <li>⚠️ promo-rule 优惠叠加边界：满减与折扣同享时计算顺序不一致</li>
+        <li>💡 建议 discount 计算提取为纯函数便于单测</li></ul>
+    </div>
+    <div class="report">
+      <h4>REQ-1024 影响范围报告 <span class="who test">给测试</span></h4>
+      <ul><li>波及模块：购物车页、结算页、优惠中心</li>
+        <li>建议重点回归：凑单弹窗、优惠计算、下单金额一致性</li>
+        <li>风险点：优惠规则改动可能影响老用户满减逻辑</li></ul>
+    </div>
+    <div class="report">
+      <h4>REQ-1027 质量归档报告 <span class="who">总评</span></h4>
+      <ul><li>本轮 Bug：2 个（均已修复）· 代码 review 建议：3 条</li>
+        <li>质量总评：B+，推荐发布；遗留：搜索降级预案待补</li></ul>
+    </div>
+    <div class="report">
+      <h4>REQ-1027 知识沉淀报告 <span class="who">待确认</span></h4>
+      <ul><li>[开发] 推荐排序降级需配置兜底策略 → <button class="btn ghost" style="padding:2px 8px">开发确认入库</button></li>
+        <li>[测试] 千人千面回归需覆盖冷启动空数据 → <button class="btn ghost" style="padding:2px 8px">测试确认入库</button></li></ul>
+    </div>`;
+  renderAsideAI();
+}
+
+/* ---------- 侧边栏（因视角变化给出"能看到什么"提示） ---------- */
+function roleName(r){return {dev:'开发',test:'测试',product:'产品',manager:'管理者'}[r]}
+function renderAsideList(role){
+  const tip = {
+    dev:'你看到自己参与的需求，可填写项目分支、提交提测。',
+    test:'你看到待发布/测试中的需求，可一键发布到测试环境。',
+    product:'你看到全部需求，按版本聚合，可新建与指派。',
+    manager:'你看到全量需求与操作日志，拥有上线审批权。'
+  }[role];
+  $('#aside').innerHTML = `<h3>视角说明</h3><div class="perm"><div class="role">${roleName(role)}</div><p style="font-size:12px;color:var(--sub);margin:6px 0 0">${tip}</p></div>
+   <h3 style="margin-top:18px">状态图例</h3>
+   ${Object.entries(statusMeta).map(([k,m])=>`<div style="margin:6px 0">${statusTag(k)}</div>`).join('')}`;
+}
+function renderAsideDetail(r,role){
+  $('#aside').innerHTML = `<h3>本需求操作权限</h3>
+   <div class="perm"><div class="role">${roleName(role)}</div><ul>
+     ${role==='dev'?'<li>添加子开发项目/分支</li><li>提交提测</li>':''}
+     ${role==='test'?'<li>发布到测试环境</li><li>标记测试通过</li>':''}
+     ${role==='product'?'<li>编辑需求信息</li><li>归属大版</li>':''}
+     ${role==='manager'?'<li>审批上线</li><li>查看全量日志</li>':''}
+   </ul></div>
+   <p style="font-size:12px;color:var(--sub)">提示：提测=自动 MR+构建（不发布）；发布动作由测试在平台执行。</p>`;
+}
+function renderAsideBigver(){$('#aside').innerHTML=`<h3>说明</h3><div class="perm">本页由系统按"版本"自动聚合，开发归属与分支均来自各需求登记数据，大版日无需再人工回忆。</div>`}
+function renderAsidePerm(){$('#aside').innerHTML=`<h3>权限原则</h3><div class="perm">操作收敛到角色；高风险动作（上线）须管理者审批并留痕。</div>`}
+function renderAsideAI(){$('#aside').innerHTML=`<h3>AI 报告节点</h3><div class="perm"><ul><li>提测后 → 代码Review(开发)+影响范围(测试)</li><li>测试通过 → 质量归档(总评)</li><li>发布后 → 知识沉淀(待确认入库)</li></ul></div>`}
+
+/* ---------- 交互 ---------- */
+function goto(tab,id){switchTab(tab,id);}
+function switchTab(tab,id){
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  const map={list:renderList,detail:renderDetail,bigver:renderBigver,perm:renderPerm,ai:renderAI};
+  map[tab](id);
+}
+function sim(msg){alert('模拟操作：'+msg);}
+$('#nav').addEventListener('click',e=>{if(e.target.dataset.tab) switchTab(e.target.dataset.tab);});
+$('#roleSel').addEventListener('change',()=>{const active=document.querySelector('#nav button.active').dataset.tab;switchTab(active);});
+
+renderList();
+</script>
+</body>
+</html>

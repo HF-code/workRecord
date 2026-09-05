@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { STATUSES, type ProjectBranch, type Requirement, type Status } from './types';
+import { STATUSES, VERSIONS, type ProjectBranch, type Requirement, type Status } from './types';
 
 export interface ExportPayload {
   version: 1;
@@ -56,7 +56,6 @@ function isValidItem(v: unknown): v is ProjectBranch {
   return (
     typeof it.id === 'string' &&
     typeof it.project === 'string' &&
-    it.project.trim() !== '' &&
     typeof it.branch === 'string' &&
     it.branch.trim() !== ''
   );
@@ -65,6 +64,12 @@ function isValidItem(v: unknown): v is ProjectBranch {
 function isValidRequirement(v: unknown): v is Requirement {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
+  // buildEnv 支持自定义标识，仅拦截非字符串与空串（空串会让 getEnv 的 ?? defaultBranch 失效）
+  const validBuildEnv =
+    r.buildEnv === undefined || (typeof r.buildEnv === 'string' && r.buildEnv.trim() !== '');
+  const validBuildItems =
+    r.buildItems === undefined ||
+    (Array.isArray(r.buildItems) && r.buildItems.every((x) => typeof x === 'string'));
   return (
     typeof r.id === 'string' &&
     typeof r.name === 'string' &&
@@ -72,10 +77,13 @@ function isValidRequirement(v: unknown): v is Requirement {
     typeof r.tapdUrl === 'string' &&
     /^https?:\/\//.test(r.tapdUrl) &&
     Array.isArray(r.items) &&
-    r.items.length > 0 &&
     r.items.every(isValidItem) &&
     isValidStatus(r.status) &&
-    (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate)))
+    (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate))) &&
+    (r.remark === undefined || typeof r.remark === 'string') &&
+    (r.version === undefined || (typeof r.version === 'string' && (VERSIONS as readonly string[]).includes(r.version))) &&
+    validBuildEnv &&
+    validBuildItems
   );
 }
 

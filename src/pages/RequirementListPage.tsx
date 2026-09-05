@@ -1,0 +1,562 @@
+import { useMemo, useState } from 'react';
+import { App as AntdApp, Badge, Button, Card, Drawer, Empty, Space, Tag, Typography, Upload } from 'antd';
+import { BarChartOutlined, PlusOutlined, UploadOutlined, ContainerOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import type { Requirement, SortMode, Status } from '../types';
+import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
+import { useDevopsApps, useBranches, useBuildPlan, useRequirements } from '../hooks/useWorkTracker';
+import { getDefaultBranch } from '../config/branches';
+import RequirementForm, { type RequirementFormValues } from '../components/RequirementForm';
+import RequirementCardGrid from '../components/RequirementCardGrid';
+import BatchPanel from '../components/BatchPanel';
+import QuickBuildDrawer from '../components/QuickBuildDrawer';
+import StatsBar from '../components/StatsBar';
+import ProjectStatsModal from '../components/ProjectStatsModal';
+import FilterBar, { type FilterValue } from '../components/FilterBar';
+import { useBuildTasks, startBuildTask, type BuildTaskPhase } from '../hooks/useBuildTasks';
+import { getCsrfToken } from '../build';
+import { getBatchItems, type BuildTarget, type MrSkipped, type MrTarget } from '../batch';
+
+const INITIAL_FILTER: FilterValue = {
+  statuses: [],
+  project: undefined,
+  releaseDateRange: null,
+  keyword: '',
+};
+
+export default function RequirementListPage() {
+  const { message, modal } = AntdApp.useApp();
+  const { requirements, upsert, update, remove, removeMany, merge, reorder, moveToPublishedTop, sortByReleaseDate } =
+    useRequirements();
+  const devopsApps = useDevopsApps();
+  const { branches } = useBranches();
+  const buildPlan = useBuildPlan(update, getDefaultBranch(branches));
+  const { tasks, activeCount, cancelTask, removeTask, clear } = useBuildTasks();
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Requirement | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [quickBuildOpen, setQuickBuildOpen] = useState(false);
+  const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
+  const [sortMode, setSortMode] = useState<SortMode>('manual');
+
+  // 批量选择状态（与 buildItems 两套数据）：卡片勾选 + 面板 X 的临时排除
+  const [selectedReqIds, setSelectedReqIds] = useState<Set<string>>(new Set());
+  const [batchExcluded, setBatchExcluded] = useState<Record<string, string[]>>({});
+  const [batchBuilding, setBatchBuilding] = useState(false);
+
+  const filtered = useMemo(() => {
+    const kw = filter.keyword.trim().toLowerCase();
+    return requirements.filter((r) => {
+      if (filter.statuses.length > 0 && !filter.statuses.includes(r.status)) return false;
+      if (filter.project && !r.items.some((it) => it.project === filter.project)) return false;
+      if (
+        filter.releaseDateRange &&
+        (r.releaseDate === null ||
+          r.releaseDate < filter.releaseDateRange[0] ||
+          r.releaseDate > filter.releaseDateRange[1])
+      ) {
+        return false;
+      }
+      if (kw && !r.name.toLowerCase().includes(kw)) return false;
+      return true;
+    });
+  }, [requirements, filter]);
+
+  /** 批量面板基于全量选中需求（不受当前筛选影响，防"幽灵选择"） */
+  const selectedReqs = useMemo(
+    () => requirements.filter((r) => selectedReqIds.has(r.id)),
+    [requirements, selectedReqIds],
+  );
+
+  const statusOptions = useMemo(
+    () => [...new Set(requirements.map((r) => r.status))],
+    [requirements],
+  );
+
+  /**
+   * 切换排序：发版时间排序为一次性真实重排数据（自动排），排完仍可继续手动拖拽；
+   * sortMode 仅作工具行指示——手动拖拽后自动熄灭（见 handleReorder）
+   */
+  const handleChangeSortMode = (mode: SortMode) => {
+    setSortMode(mode);
+    if (mode !== 'manual') sortByReleaseDate(mode);
+  };
+
+  /** 拖拽排序：数据重排 + 退出排序指示状态（工具行恢复中性，表示当前为手动顺序） */
+  const handleReorder = (activeId: string, overId: string) => {
+    if (sortMode !== 'manual') setSortMode('manual');
+    reorder(activeId, overId);
+  };
+
+  const toggleStatusFilter = (status: Status) => {
+    setFilter((f) => ({
+      ...f,
+      statuses: f.statuses.includes(status)
+        ? f.statuses.filter((s) => s !== status)
+        : [...f.statuses, status],
+    }));
+  };
+
+  /**
+   * 卡片勾选/取消（需求级批量选择）：
+   * 勾选卡片 = 该需求全部项目直接进入批量范围（不再依赖卡片内子勾选）；
+   * 勾选时清空该需求的临时排除（重新勾选 = 恢复全量参与）；取消时同步清空排除。
+   */
+  const handleToggleSelect = (reqId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedReqIds((s) => new Set(s).add(reqId));
+      setBatchExcluded((m) => {
+        if (!(reqId in m)) return m;
+        const next = { ...m };
+        delete next[reqId];
+        return next;
+      });
+    } else {
+      setSelectedReqIds((s) => {
+        const next = new Set(s);
+        next.delete(reqId);
+        return next;
+      });
+      setBatchExcluded((m) => {
+        if (!(reqId in m)) return m;
+        const next = { ...m };
+        delete next[reqId];
+        return next;
+      });
+    }
+  };
+
+  /**
+   * 批量面板 X 掉某项目（仅本次生效，不回写 buildItems）；
+   * 若该需求有效项清零 → 自动取消其卡片勾选并清空排除（用户拍板的联动规则）。
+   */
+  const handleRemoveItem = (reqId: string, itemId: string) => {
+    const req = requirements.find((r) => r.id === reqId);
+    if (!req) return;
+    setBatchExcluded((m) => {
+      const next = { ...m, [reqId]: [...(m[reqId] ?? []), itemId] };
+      // 判断移除后该需求是否还有有效项目
+      const remaining = getBatchItems(req, next).length;
+      if (remaining === 0) {
+        setSelectedReqIds((s) => {
+          const sel = new Set(s);
+          sel.delete(reqId);
+          return sel;
+        });
+        delete next[reqId];
+        message.info('该需求已无参与批量的项目，已自动取消勾选（卡片数据未改动）');
+      }
+      return next;
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedReqIds(new Set());
+    setBatchExcluded({});
+  };
+
+  /** 批量 MR：全量打开 GitLab 预填页（同步循环），清单链接兜底浏览器拦截 */
+  const handleBatchMr = (targets: MrTarget[], skipped: MrSkipped[]) => {
+    targets.forEach((t) => window.open(t.url, '_blank', 'noreferrer'));
+    if (targets.length > 0) {
+      message.success(`已打开 ${targets.length} 个 MR 页面，如被浏览器拦截请从上方清单逐个点击打开`);
+    }
+    if (skipped.length > 0) {
+      message.warning(`已跳过 ${skipped.length} 项：${skipped.map((s) => `【${s.project}】${s.reason}`).join('；')}`);
+    }
+  };
+
+  /** 批量构建：去重后逐个并入全局构建任务队列，汇总提示 */
+  const handleBatchBuild = async (builds: BuildTarget[], dupCount: number) => {
+    if (!getCsrfToken()) {
+      message.warning('未登录运维平台，请先登录后再构建');
+      return;
+    }
+    setBatchBuilding(true);
+    try {
+      // 任务名合并展示来源需求（如"需求A、需求B"），复用任务 store 的轮询/重试/取消
+      const results = await Promise.all(
+        builds.map((b) => startBuildTask(b.reqNames.join('、'), b.project, b.env)),
+      );
+      let okCount = 0;
+      const fails: string[] = [];
+      let authFailed = false;
+      results.forEach((r, i) => {
+        const app = builds[i].project;
+        if (r.ok) {
+          okCount += 1;
+        } else if (r.status === 401 || r.status === 403) {
+          authFailed = true;
+        } else if (r.detail === '已取消') {
+          // 用户主动取消，不额外提示
+        } else {
+          fails.push(`【${app}】${r.detail}`);
+        }
+      });
+      if (authFailed) {
+        message.error('登录态已失效，请重新登录运维平台');
+        return;
+      }
+      if (fails.length > 0) {
+        message.error(`构建失败：${fails.join('；')}`);
+        if (okCount > 0) message.success(`成功触发 ${okCount} 个项目构建`);
+        return;
+      }
+      if (okCount > 0) {
+        message.success(
+          `已触发 ${okCount} 个构建${dupCount > 0 ? `（合并去重 ${dupCount} 个）` : ''}，可在「构建任务」查看进度`,
+        );
+      }
+    } finally {
+      setBatchBuilding(false);
+    }
+  };
+
+  const openCreateForm = () => {
+    setEditing(null);
+    setFormOpen(true);
+  };
+
+  const openEditForm = (req: Requirement) => {
+    setEditing(req);
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditing(null);
+  };
+
+  const handleSubmit = (values: RequirementFormValues) => {
+    const isEdit = upsert(editing?.id ?? null, values);
+    // 编辑保存后状态变为「已发布」，同样沉到尾部已发布区最前（与卡片内切换行为一致）
+    if (editing && editing.status !== '已发布' && values.status === '已发布') {
+      moveToPublishedTop(editing.id);
+      message.info('已发布的需求已自动沉底');
+    }
+    message.success(isEdit ? '已保存' : '登记成功');
+    closeForm();
+  };
+
+  /** 修改状态：切到「已发布」时自动沉底——移到尾部连续已发布区的最前面 */
+  const handleStatusChange = (id: string, status: Status) => {
+    update(id, { status });
+    if (status === '已发布') {
+      moveToPublishedTop(id);
+      message.info('已发布的需求已自动沉底');
+    }
+  };
+
+  const handleDelete = (id: string) => {
+    remove(id);
+    // 同步清掉批量选择与临时排除，避免残留
+    setSelectedReqIds((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+    setBatchExcluded((m) => {
+      if (!(id in m)) return m;
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
+    message.success('已删除');
+  };
+
+  const handleExportAll = () => {
+    if (requirements.length === 0) {
+      message.info('暂无数据可导出');
+      return;
+    }
+    exportAll(requirements);
+    message.success('已导出全部数据');
+  };
+
+  const handleExportAndClean = () => {
+    const targets = findOlderThanOneMonth(requirements);
+    if (targets.length === 0) {
+      message.info('无可清理数据');
+      return;
+    }
+    modal.confirm({
+      title: '导出并清理一个月前数据',
+      content: `将先导出 ${targets.length} 条数据到本地文件，再从浏览器缓存中删除，删除后不可恢复（请保留好导出文件）。`,
+      okText: '导出并删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: () => {
+        downloadJson(buildExportPayload('archive', targets));
+        removeMany(new Set(targets.map((r) => r.id)));
+        message.success(`已导出并清理 ${targets.length} 条数据`);
+      },
+    });
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const { requirements: imported, invalidCount } = parseImportFile(await file.text());
+      if (imported.length === 0) {
+        message.warning(
+          invalidCount > 0 ? `没有可导入的数据（${invalidCount} 条格式非法）` : '文件中没有数据',
+        );
+        return;
+      }
+      const existingIds = new Set(requirements.map((r) => r.id));
+      const freshCount = imported.filter((r) => !existingIds.has(r.id)).length;
+      if (freshCount === 0) {
+        message.info(`${imported.length} 条数据均已存在，无需导入`);
+        return;
+      }
+      modal.confirm({
+        title: '确认导入',
+        content:
+          `共解析出 ${imported.length} 条有效数据` +
+          (imported.length > freshCount ? `，其中 ${imported.length - freshCount} 条与现有数据重复将跳过` : '') +
+          (invalidCount > 0 ? `，${invalidCount} 条格式非法被丢弃` : '') +
+          `。实际导入 ${freshCount} 条。`,
+        okText: '导入',
+        cancelText: '取消',
+        onOk: () => {
+          const fresh = merge(imported);
+          message.success(`已导入 ${fresh.length} 条数据`);
+        },
+      });
+    } catch (e) {
+      message.error(`导入失败：${(e as Error).message}`);
+    }
+  };
+
+  return (
+    <Card>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 16,
+        }}
+      >
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          工作记录
+        </Typography.Title>
+        <Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateForm}>
+            登记需求
+          </Button>
+          <Upload
+            accept=".json,application/json"
+            showUploadList={false}
+            beforeUpload={(file) => {
+              void handleImportFile(file);
+              return false;
+            }}
+          >
+            <Button icon={<UploadOutlined />}>导入数据</Button>
+          </Upload>
+          <Button onClick={handleExportAll}>导出数据</Button>
+          <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
+          <Button icon={<ThunderboltOutlined />} onClick={() => setQuickBuildOpen(true)}>
+            快速构建
+          </Button>
+          <Badge count={activeCount} size="small" offset={[-2, 2]}>
+            <Button
+              icon={<ContainerOutlined />}
+              onClick={() => setTasksOpen(true)}
+              data-testid="build-tasks-open-button"
+            >
+              构建任务
+            </Button>
+          </Badge>
+        </Space>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 16,
+          marginBottom: 16,
+        }}
+      >
+        <StatsBar
+          requirements={requirements}
+          activeStatuses={filter.statuses}
+          onToggle={toggleStatusFilter}
+        />
+        <Button
+          type="text"
+          icon={<BarChartOutlined />}
+          onClick={() => setStatsOpen(true)}
+          style={{ flexShrink: 0 }}
+        >
+          统计项目
+        </Button>
+      </div>
+
+      <FilterBar
+        value={filter}
+        onChange={setFilter}
+        statusOptions={statusOptions}
+        apps={devopsApps.apps}
+      />
+
+      {/* 批量操作区：选中需求 > 0 时显示（上半汇总去重 + 下半逐需求 X 排除） */}
+      <BatchPanel
+        reqs={selectedReqs}
+        apps={devopsApps.apps}
+        buildPlan={buildPlan}
+        excluded={batchExcluded}
+        onRemoveItem={handleRemoveItem}
+        onClearSelection={handleClearSelection}
+        onBatchMr={handleBatchMr}
+        onBatchBuild={handleBatchBuild}
+        batchBuilding={batchBuilding}
+      />
+
+      <RequirementCardGrid
+        data={filtered}
+        apps={devopsApps.apps}
+        branches={branches}
+        buildPlan={buildPlan}
+        selectedReqIds={selectedReqIds}
+        onToggleSelect={handleToggleSelect}
+        onEdit={openEditForm}
+        onDelete={handleDelete}
+        onChangeStatus={handleStatusChange}
+        onChangeReleaseDate={(id, releaseDate) => update(id, { releaseDate })}
+        onReorder={handleReorder}
+        sortMode={sortMode}
+        onChangeSortMode={handleChangeSortMode}
+      />
+
+      <RequirementForm
+        open={formOpen}
+        editing={editing}
+        apps={devopsApps.apps}
+        branches={branches}
+        onCancel={closeForm}
+        onSubmit={handleSubmit}
+      />
+
+      <ProjectStatsModal
+        open={statsOpen}
+        requirements={filtered}
+        onClose={() => setStatsOpen(false)}
+      />
+
+      <QuickBuildDrawer
+        open={quickBuildOpen}
+        onClose={() => setQuickBuildOpen(false)}
+        branches={branches}
+        apps={devopsApps.apps}
+      />
+
+      <Drawer
+        title={`构建任务${activeCount > 0 ? `（进行中 ${activeCount}）` : ''}`}
+        open={tasksOpen}
+        onClose={() => setTasksOpen(false)}
+        width={460}
+        extra={
+          tasks.length > 0 ? (
+            <Button type="link" onClick={clear} data-testid="build-tasks-clear-button">
+              清空记录
+            </Button>
+          ) : null
+        }
+      >
+        {tasks.length === 0 ? (
+          <Empty description="暂无构建任务" />
+        ) : (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {tasks.map((t) => (
+              <BuildTaskItem
+                key={t.id}
+                task={t}
+                onCancel={() => cancelTask(t.id)}
+                onRemove={() => removeTask(t.id)}
+              />
+            ))}
+          </Space>
+        )}
+      </Drawer>
+    </Card>
+  );
+}
+
+const TASK_PHASE_TEXT: Record<BuildTaskPhase, { text: string; color: string }> = {
+  building: { text: '构建中', color: 'processing' },
+  waiting: { text: '等待重试', color: 'warning' },
+  done: { text: '已完成', color: 'success' },
+  failed: { text: '失败', color: 'error' },
+  cancelled: { text: '已取消', color: 'default' },
+};
+
+function BuildTaskItem({
+  task,
+  onCancel,
+  onRemove,
+}: {
+  task: import('../hooks/useBuildTasks').BuildTask;
+  onCancel: () => void;
+  onRemove: () => void;
+}) {
+  const phase = TASK_PHASE_TEXT[task.phase];
+  const active = task.phase === 'building' || task.phase === 'waiting';
+  return (
+    <Card size="small" style={{ width: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{task.reqName}</div>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#555' }}>
+            {task.app} · {task.env}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <Tag color={phase.color}>{phase.text}</Tag>
+            {task.phase === 'waiting' && (
+              <span style={{ fontSize: 12, color: '#888' }}>
+                第 {task.retry} 次重试，{task.nextInSec}s 后
+              </span>
+            )}
+            {task.detail && task.phase !== 'building' && (
+              <div style={{ fontSize: 12, color: '#999', marginTop: 4, wordBreak: 'break-all' }}>
+                {task.detail}
+              </div>
+            )}
+            {task.recordUrl && (
+              <div style={{ marginTop: 4 }}>
+                <a
+                  href={task.recordUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12 }}
+                  data-testid="build-task-record-link"
+                >
+                  查看构建记录
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ flexShrink: 0 }}>
+          {active ? (
+            <Button
+              danger
+              size="small"
+              onClick={onCancel}
+              data-testid="build-task-cancel-button"
+            >
+              取消
+            </Button>
+          ) : (
+            <Button size="small" onClick={onRemove} data-testid="build-task-remove-button">
+              移除
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}

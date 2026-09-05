@@ -1,8 +1,11 @@
-import { useEffect } from 'react';
 import { Button, DatePicker, Form, Input, Modal, Select, Space } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { STATUSES, type Requirement, type Status } from '../types';
+import { STATUSES, VERSIONS, type Requirement, type Status, type Version } from '../types';
+import type { DevopsApp } from '../config/devopsApps';
+import type { BranchConfig } from '../config/branches';
+import { getDefaultBranch } from '../config/branches';
+import type { BuildEnv } from '../build';
 import ProjectSelect from './ProjectSelect';
 
 interface FormValues {
@@ -10,7 +13,11 @@ interface FormValues {
   tapdUrl: string;
   status: Status;
   releaseDate?: dayjs.Dayjs | null;
+  version: Version;
+  /** 目标分支（构建环境），登记时即选定，构建控件与 MR 目标分支共用 */
+  buildEnv: BuildEnv;
   items: { id?: string; project: string; branch: string }[];
+  remark?: string;
 }
 
 /** 表单提交的值（releaseDate 已格式化为 'YYYY-MM-DD'） */
@@ -19,48 +26,50 @@ export interface RequirementFormValues {
   tapdUrl: string;
   status: Status;
   releaseDate: string | null;
+  version: Version;
+  buildEnv: BuildEnv;
   items: { id?: string; project: string; branch: string }[];
+  remark?: string;
 }
 
 interface Props {
   open: boolean;
   editing: Requirement | null;
-  projects: string[];
-  onAddProject: (name: string) => void;
+  apps: DevopsApp[];
+  /** 分支配置（与构建按钮前下拉同源同一份数据），供目标分支选择 */
+  branches: BranchConfig[];
   onCancel: () => void;
   onSubmit: (values: RequirementFormValues) => void;
 }
 
-export default function RequirementForm({
-  open,
-  editing,
-  projects,
-  onAddProject,
-  onCancel,
-  onSubmit,
-}: Props) {
+export default function RequirementForm({ open, editing, apps, branches, onCancel, onSubmit }: Props) {
   const [form] = Form.useForm<FormValues>();
+  /** 目标分支选项与构建控件同源：来自「系统配置 → 分支配置」 */
+  const envOptions = branches.map((b) => ({ label: b.label, value: b.value }));
+  /** 未选过时（含历史数据）默认选中全局默认分支 */
+  const defaultEnv = getDefaultBranch(branches);
 
-  useEffect(() => {
-    if (!open) return;
-    if (editing) {
-      form.setFieldsValue({
+  const initialValues: FormValues = editing
+    ? {
         name: editing.name,
         tapdUrl: editing.tapdUrl,
         status: editing.status,
         releaseDate: editing.releaseDate ? dayjs(editing.releaseDate) : null,
+        version: editing.version ?? '大版',
+        buildEnv: editing.buildEnv ?? defaultEnv,
         items: editing.items.map((it) => ({ id: it.id, project: it.project, branch: it.branch })),
-      });
-    } else {
-      form.setFieldsValue({
+        remark: editing.remark ?? '',
+      }
+    : {
         name: '',
         tapdUrl: '',
         status: '开发中',
         releaseDate: null,
+        version: '大版',
+        buildEnv: defaultEnv,
         items: [{ project: undefined as unknown as string, branch: '' }],
-      });
-    }
-  }, [open, editing, form]);
+        remark: '',
+      };
 
   const handleOk = async () => {
     const values = await form.validateFields();
@@ -69,16 +78,20 @@ export default function RequirementForm({
       tapdUrl: values.tapdUrl.trim(),
       status: values.status,
       releaseDate: values.releaseDate ? values.releaseDate.format('YYYY-MM-DD') : null,
+      version: values.version,
+      buildEnv: values.buildEnv,
       items: values.items.map((it) => ({
         id: it.id,
         project: it.project,
         branch: it.branch.trim(),
       })),
+      remark: values.remark?.trim() || undefined,
     });
   };
 
   return (
     <Modal
+      key={editing?.id ?? 'new'}
       title={editing ? '编辑需求' : '登记需求'}
       open={open}
       onOk={handleOk}
@@ -86,9 +99,9 @@ export default function RequirementForm({
       okText="保存"
       cancelText="取消"
       width={720}
-      destroyOnClose
+      destroyOnHidden
     >
-      <Form form={form} layout="vertical" preserve={false}>
+      <Form form={form} layout="vertical" preserve={false} initialValues={initialValues}>
         <Form.Item
           name="name"
           label="需求名称"
@@ -106,25 +119,26 @@ export default function RequirementForm({
         >
           <Input placeholder="https://www.tapd.cn/..." />
         </Form.Item>
-        <Space size="large" style={{ display: 'flex' }}>
-          <Form.Item name="status" label="状态" rules={[{ required: true }]} style={{ width: 200 }}>
+        <Space size="large" style={{ display: 'flex', flexWrap: 'wrap' }}>
+          <Form.Item name="status" label="状态" rules={[{ required: true }]} style={{ width: 160 }}>
             <Select options={STATUSES.map((s) => ({ label: s, value: s }))} />
           </Form.Item>
-          <Form.Item name="releaseDate" label="发版时间" style={{ width: 200 }}>
+          <Form.Item name="releaseDate" label="发版时间" style={{ width: 160 }}>
             <DatePicker allowClear style={{ width: '100%' }} placeholder="可留空" />
           </Form.Item>
+          <Form.Item name="version" label="版本" rules={[{ required: true }]} style={{ width: 120 }}>
+            <Select options={VERSIONS.map((v) => ({ label: v, value: v }))} />
+          </Form.Item>
+          <Form.Item
+            name="buildEnv"
+            label="目标分支"
+            rules={[{ required: true, message: '请选择目标分支' }]}
+            style={{ width: 160 }}
+          >
+            <Select options={envOptions} placeholder="选择构建分支" />
+          </Form.Item>
         </Space>
-        <Form.List
-          name="items"
-          rules={[
-            {
-              validator: (_, items) =>
-                items && items.length > 0
-                  ? Promise.resolve()
-                  : Promise.reject(new Error('至少添加一条项目分支')),
-            },
-          ]}
-        >
+        <Form.List name="items">
           {(fields, { add, remove }, { errors }) => (
             <>
               <div style={{ marginBottom: 8, fontWeight: 500 }}>项目 / 分支</div>
@@ -132,10 +146,9 @@ export default function RequirementForm({
                 <Space key={field.key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
                   <Form.Item
                     name={[field.name, 'project']}
-                    rules={[{ required: true, message: '请选择项目' }]}
                     style={{ width: 280, marginBottom: 0 }}
                   >
-                    <ProjectSelect projects={projects} onAddProject={onAddProject} />
+                    <ProjectSelect apps={apps} />
                   </Form.Item>
                   <Form.Item
                     name={[field.name, 'branch']}
@@ -159,6 +172,9 @@ export default function RequirementForm({
             </>
           )}
         </Form.List>
+        <Form.Item name="remark" label="备注">
+          <Input.TextArea rows={3} placeholder="选填，补充说明" maxLength={500} showCount />
+        </Form.Item>
       </Form>
     </Modal>
   );
