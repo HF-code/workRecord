@@ -20,6 +20,7 @@ import {
   type MrSkipped,
   type MrTarget,
 } from '../batch';
+import { copyText } from '../utils/clipboard';
 import ArtifactList from './ArtifactList';
 
 interface Props {
@@ -113,10 +114,10 @@ export default function BatchPanel({
   /** 复制构建清单：逐行 `项目名【目标分支】` */
   const handleCopyBuilds = async () => {
     const text = builds.map((b) => `${b.project}【${b.env}】`).join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyText(text);
+    if (ok) {
       message.success(`已复制 ${builds.length} 条构建目标`);
-    } catch {
+    } else {
       message.error('复制失败，请手动选择清单内容复制');
     }
   };

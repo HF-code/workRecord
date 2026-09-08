@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { App as AntdApp, Button, Empty, Input, List, Modal, Typography } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
 import type { Requirement } from '../types';
+import { copyText } from '../utils/clipboard';
 
 interface Props {
   open: boolean;
@@ -26,8 +27,12 @@ export default function ProjectStatsModal({ open, requirements, onClose }: Props
   const namesText = stats.map(([p]) => `【${p}】`).join('\n');
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(namesText);
-    message.success('已复制');
+    const ok = await copyText(namesText);
+    if (ok) {
+      message.success('已复制');
+    } else {
+      message.error('复制失败，请手动选择内容复制');
+    }
   };
 
   return (

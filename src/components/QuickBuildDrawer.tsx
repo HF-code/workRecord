@@ -14,6 +14,7 @@ import type { BranchConfig } from '../config/branches';
 import { getDefaultBranch } from '../config/branches';
 import { getCsrfToken, type BuildEnv } from '../build';
 import { startBuildTask } from '../hooks/useBuildTasks';
+import { copyText } from '../utils/clipboard';
 import ArtifactList from './ArtifactList';
 
 interface Props {
@@ -192,10 +193,10 @@ export default function QuickBuildDrawer({ open, onClose, branches, apps }: Prop
   const handleCopy = async () => {
     if (summary.length === 0) return;
     const text = summary.map((p) => `${p}【${env}】`).join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyText(text);
+    if (ok) {
       message.success(`已复制 ${summary.length} 条构建目标`);
-    } catch {
+    } else {
       message.error('复制失败，请手动选择清单内容复制');
     }
   };

@@ -1,0 +1,19 @@
+https://devops.vzan.com/deploy/build
+GET请求
+入参
+page_no 1
+page_size 10
+app 同构建接口的app
+branch 同构建接口的branch
+email 账号对应的email
+group 同构建接口的group
+
+响应参数
+{
+    "detail": [
+      {
+            file_url: 制品链接（）
+            succeed: 0失败 1成功 2进行中
+      },
+    ]
+}

@@ -7,6 +7,7 @@
 import { App as AntdApp, Button, Tag, Tooltip, Typography } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
 import { useBuildTasks, type ArtifactState, type BuildTask } from '../hooks/useBuildTasks';
+import { copyText } from '../utils/clipboard';
 
 /** 制品状态 → 标签文案与颜色 */
 const STATUS_META: Record<ArtifactState['status'], { label: string; color: string }> = {
@@ -24,10 +25,10 @@ function ArtifactRow({ task }: { task: BuildTask }) {
 
   const handleCopy = async () => {
     if (!artifact.fileUrl) return;
-    try {
-      await navigator.clipboard.writeText(artifact.fileUrl);
+    const ok = await copyText(artifact.fileUrl);
+    if (ok) {
       message.success(`已复制 ${task.app} 的制品链接`);
-    } catch {
+    } else {
       message.error('复制失败，请手动选择链接复制');
     }
   };
@@ -78,10 +79,10 @@ export default function ArtifactList() {
   const handleCopyAll = async () => {
     if (successItems.length === 0) return;
     const text = successItems.map((t) => `${t.app} ${t.artifact?.fileUrl}`).join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyText(text);
+    if (ok) {
       message.success(`已复制 ${successItems.length} 条制品链接`);
-    } catch {
+    } else {
       message.error('复制失败，请手动选择清单内容复制');
     }
   };
