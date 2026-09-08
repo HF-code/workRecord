@@ -170,7 +170,12 @@ function startArtifactPolling(id: string, app: string, env: BuildEnv): void {
  * 任务状态上报到全局 store，可在「构建任务」面板查看 / 取消。
  * 返回最终构建结果（成功 / 失败 / 取消）。
  */
-export function startBuildTask(reqName: string, app: string, env: BuildEnv): Promise<BuildResult> {
+export function startBuildTask(
+  reqName: string,
+  app: string,
+  env: BuildEnv,
+  buildOther?: string,
+): Promise<BuildResult> {
   const id = `build-task-${++seq}`;
   let cancelled = false;
 
@@ -200,7 +205,7 @@ export function startBuildTask(reqName: string, app: string, env: BuildEnv): Pro
         return finish('cancelled', { detail: '已取消' }, { ok: false, detail: '已取消' });
       }
       patchTask(id, { phase: 'building', nextInSec: null });
-      const r = await requestBuild({ app, env, update: false });
+      const r = await requestBuild({ app, env, update: false, buildOther });
       if (cancelled) {
         return finish('cancelled', { detail: '已取消' }, { ok: false, detail: '已取消' });
       }

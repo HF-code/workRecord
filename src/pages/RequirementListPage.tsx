@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { App as AntdApp, Badge, Button, Card, Drawer, Empty, Space, Tag, Typography, Upload } from 'antd';
 import { BarChartOutlined, PlusOutlined, UploadOutlined, ContainerOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { Requirement, SortMode, Status } from '../types';
@@ -8,7 +9,6 @@ import { getDefaultBranch } from '../config/branches';
 import RequirementForm, { type RequirementFormValues } from '../components/RequirementForm';
 import RequirementCardGrid from '../components/RequirementCardGrid';
 import BatchPanel from '../components/BatchPanel';
-import QuickBuildDrawer from '../components/QuickBuildDrawer';
 import StatsBar from '../components/StatsBar';
 import ProjectStatsModal from '../components/ProjectStatsModal';
 import FilterBar, { type FilterValue } from '../components/FilterBar';
@@ -24,6 +24,7 @@ const INITIAL_FILTER: FilterValue = {
 };
 
 export default function RequirementListPage() {
+  const navigate = useNavigate();
   const { message, modal } = AntdApp.useApp();
   const { requirements, upsert, update, remove, removeMany, merge, reorder, moveToPublishedTop, sortByReleaseDate } =
     useRequirements();
@@ -36,7 +37,6 @@ export default function RequirementListPage() {
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
-  const [quickBuildOpen, setQuickBuildOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
 
@@ -177,7 +177,7 @@ export default function RequirementListPage() {
     try {
       // 任务名合并展示来源需求（如"需求A、需求B"），复用任务 store 的轮询/重试/取消
       const results = await Promise.all(
-        builds.map((b) => startBuildTask(b.reqNames.join('、'), b.project, b.env)),
+        builds.map((b) => startBuildTask(b.reqNames.join('、'), b.project, b.env, b.buildOther)),
       );
       let okCount = 0;
       const fails: string[] = [];
@@ -357,7 +357,7 @@ export default function RequirementListPage() {
           </Upload>
           <Button onClick={handleExportAll}>导出数据</Button>
           <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
-          <Button icon={<ThunderboltOutlined />} onClick={() => setQuickBuildOpen(true)}>
+          <Button icon={<ThunderboltOutlined />} onClick={() => navigate('/quick-build')}>
             快速构建
           </Button>
           <Badge count={activeCount} size="small" offset={[-2, 2]}>
@@ -445,13 +445,6 @@ export default function RequirementListPage() {
         open={statsOpen}
         requirements={filtered}
         onClose={() => setStatsOpen(false)}
-      />
-
-      <QuickBuildDrawer
-        open={quickBuildOpen}
-        onClose={() => setQuickBuildOpen(false)}
-        branches={branches}
-        apps={devopsApps.apps}
       />
 
       <Drawer

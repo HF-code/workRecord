@@ -1,5 +1,5 @@
 /**
- * 快速批量构建 Drawer（临时工具，不进入需求列表）：
+ * 快速批量构建页面（独立路由 /quick-build，由抽屉升级而来）：
  * 每次「添加」录入的一批形成一个独立小框（便于看出每一波/每个人发了什么），
  * 上方构建清单为全部有效批次的汇总（自动去重）。
  * 批次内项目可 X 单独删除；批次可整体「从汇总去除」（灰显保留，可恢复）；
@@ -7,22 +7,16 @@
  * 状态（batches + env）localStorage 持久化，跨刷新/分时段收集不丢，「清空」重置。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { App as AntdApp, Button, Drawer, Empty, Input, Popconfirm, Select, Space, Tag, Tooltip, Typography } from 'antd';
-import { CopyOutlined, WarningOutlined } from '@ant-design/icons';
-import type { DevopsApp } from '../config/devopsApps';
-import type { BranchConfig } from '../config/branches';
+import { App as AntdApp, Button, Card, Empty, Input, Popconfirm, Select, Space, Tag, Tooltip, Typography } from 'antd';
+import { CopyOutlined, ThunderboltOutlined, WarningOutlined } from '@ant-design/icons';
 import { getDefaultBranch } from '../config/branches';
 import { getCsrfToken, type BuildEnv } from '../build';
+import { useDevopsApps, useBranches } from '../hooks/useWorkTracker';
 import { startBuildTask } from '../hooks/useBuildTasks';
 import { copyText } from '../utils/clipboard';
-import ArtifactList from './ArtifactList';
-
-interface Props {
-  open: boolean;
-  onClose: () => void;
-  branches: BranchConfig[];
-  apps: DevopsApp[];
-}
+import ArtifactList from '../components/ArtifactList';
+import type { DevopsApp } from '../config/devopsApps';
+import type { BranchConfig } from '../config/branches';
 
 /** localStorage 持久化 key（多波收集跨时段保留） */
 const STORAGE_KEY = 'work-tracker-quick-build';
@@ -96,7 +90,7 @@ function clearState(): void {
  * 按换行/逗号（中英）/分号（中英）/顿号/Tab/空格分割 → 去除尾部 `【分支】`/`[分支]` 上报标记
  * → trim → 滤空 → 保序去重。
  */
-export function parseProjectNames(text: string): string[] {
+function parseProjectNames(text: string): string[] {
   const parts = text
     .split(/[\n,，;；、\t ]+/)
     .map((s) => s.trim().replace(/(【[^】]*】|\[[^\]]*\])+$/, '').trim())
@@ -104,8 +98,11 @@ export function parseProjectNames(text: string): string[] {
   return [...new Set(parts)];
 }
 
-export default function QuickBuildDrawer({ open, onClose, branches, apps }: Props) {
+export default function QuickBuildPage() {
   const { message } = AntdApp.useApp();
+  const devopsApps = useDevopsApps();
+  const { branches } = useBranches();
+  const apps = devopsApps.apps;
   const defaultEnv = getDefaultBranch(branches);
 
   // 恢复持久化状态（env 为空串时回退默认分支）
@@ -214,7 +211,7 @@ export default function QuickBuildDrawer({ open, onClose, branches, apps }: Prop
     setBuilding(true);
     try {
       // reqName 用项目名自身，构建任务 Drawer 中可读
-      const results = await Promise.all(summary.map((p) => startBuildTask(p, p, env)));
+      const results = await Promise.all(summary.map((p) => startBuildTask(p, p, env, buildOtherOf(env))));
       let okCount = 0;
       const fails: string[] = [];
       let authFailed = false;
@@ -249,10 +246,16 @@ export default function QuickBuildDrawer({ open, onClose, branches, apps }: Prop
   /** 未知项目检测：不在运维平台应用名单（名单可能过期，仅警示不阻断） */
   const isUnknown = (project: string) => !apps.some((a) => a.app === project);
 
+  /** 取某目标分支对应的构建命令（build_other）：优先分支配置 buildOther，缺省回退目标分支本身 */
+  const buildOtherOf = (envValue: string): string => {
+    const cfg = branches.find((b) => b.value === envValue);
+    return (cfg?.buildOther && cfg.buildOther.trim()) || envValue;
+  };
+
   const excludedCount = batches.filter((b) => b.excluded).length;
 
   return (
-    <Drawer title="快速批量构建" open={open} onClose={onClose} width={760}>
+    <Card title="快速批量构建">
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         {/* 输入区：粘贴项目名，每次录入成一批 */}
         <div>
@@ -285,7 +288,7 @@ export default function QuickBuildDrawer({ open, onClose, branches, apps }: Prop
             filterOption={(inputValue, option) =>
               String(option?.label ?? '').toLowerCase().includes(inputValue.toLowerCase())
             }
-            options={apps.map((a) => ({
+            options={apps.map((a: DevopsApp) => ({
               label: a.alias ? `${a.app}（${a.alias}）` : a.app,
               value: a.app,
             }))}
@@ -298,7 +301,7 @@ export default function QuickBuildDrawer({ open, onClose, branches, apps }: Prop
             size="small"
             value={env}
             onChange={setEnv}
-            options={branches.map((b) => ({ label: b.label, value: b.value }))}
+            options={branches.map((b: BranchConfig) => ({ label: b.label, value: b.value }))}
             style={{ width: 140, flexShrink: 0 }}
           />
         </div>
@@ -446,12 +449,12 @@ export default function QuickBuildDrawer({ open, onClose, branches, apps }: Prop
             </Space>
 
             {/* 批量构建：作用于汇总 */}
-            <Button type="primary" block loading={building} disabled={summary.length === 0} onClick={() => void handleBuild()}>
+            <Button type="primary" block loading={building} disabled={summary.length === 0} icon={<ThunderboltOutlined />} onClick={() => void handleBuild()}>
               批量构建（{summary.length}）
             </Button>
           </>
         )}
       </Space>
-    </Drawer>
+    </Card>
   );
 }

@@ -58,6 +58,12 @@ export default function BranchConfigPage() {
     syncDraft(draft.map((b) => ({ ...b, isDefault: b.value === value })));
   };
 
+  /** 编辑某分支的构建命令（build_other）：空串视为回退到分支标识本身 */
+  const handleBuildOtherChange = (value: BuildEnv, buildOther: string) => {
+    const bo = buildOther.trim();
+    syncDraft(draft.map((b) => (b.value === value ? { ...b, buildOther: bo || undefined } : b)));
+  };
+
   const handleSave = () => {
     if (draft.length === 0) {
       message.warning('至少保留一个分支');
@@ -95,7 +101,7 @@ export default function BranchConfigPage() {
     {
       title: '默认选中',
       key: 'isDefault',
-      width: 140,
+      width: 130,
       render: (_, record) => (
         <Radio
           checked={!!record.isDefault}
@@ -103,6 +109,20 @@ export default function BranchConfigPage() {
         >
           设为默认
         </Radio>
+      ),
+    },
+    {
+      title: '构建命令',
+      dataIndex: 'buildOther',
+      key: 'buildOther',
+      width: 170,
+      render: (val: string | undefined, record) => (
+        <Input
+          size="small"
+          placeholder={record.value}
+          value={val ?? ''}
+          onChange={(e) => handleBuildOtherChange(record.value, e.target.value)}
+        />
       ),
     },
     {
@@ -130,6 +150,7 @@ export default function BranchConfigPage() {
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
         构建按钮前的分支下拉选项，可在此自定义增删与排序（拖拽行顺序调整）及默认选中项。
         内置环境：{BUILTIN_BUILD_ENVS.join(' / ')}；也可输入自定义分支标识（需运维平台支持）。
+        「构建命令」为该分支构建时实际传给运维平台的 build_other 字段，默认与分支标识相同；当两者不一致时（如分支标识=pre 但构建命令=pre-txnj）填写。
       </Typography.Paragraph>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>

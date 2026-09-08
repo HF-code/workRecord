@@ -45,6 +45,8 @@ export function buildMergeRequestUrl(gitUrl: string, branch: string, targetBranc
 export interface BuildParams {
   app: string;
   env: BuildEnv;
+  /** 构建命令（运维平台 build_other 字段）；缺省回退 env */
+  buildOther?: string;
   /** 对应扩展中 update == '1'：同时更新环境 */
   update: boolean;
 }
@@ -111,7 +113,7 @@ async function buildPayload(params: BuildParams) {
     committed_msg: '',
     env: params.update ? params.env : '',
     build_type: 'docker_build',
-    build_other: params.env || 'dev',
+    build_other: params.buildOther || params.env || 'dev',
   };
 }
 
