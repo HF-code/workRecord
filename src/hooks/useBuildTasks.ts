@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { requestBuild, type BuildEnv } from '../build';
+import {
+  requestBuild,
+  resolveBuildBranch,
+  fetchCurrentEmail,
+  fetchArtifact,
+  BUILD_GROUP,
+  type BuildEnv,
+} from '../build';
 import { loadBuildPollInterval, loadAutoBuildOnFail } from '../storage';
 import { BUILD_BUSY_DETAIL } from '../config/buildConfig';
 
@@ -24,7 +31,18 @@ export interface BuildTask {
   detail?: string;
   /** 构建成功后的构建记录页地址 */
   recordUrl?: string;
+  /** 制品回查状态（phase 到 done 时启动轮询，随任务清理而清理） */
+  artifact?: ArtifactState;
   updatedAt: number;
+}
+
+/** 制品回查状态 */
+export interface ArtifactState {
+  status: 'querying' | 'success' | 'fail' | 'timeout';
+  /** 成功时的制品链接 */
+  fileUrl?: string;
+  /** 失败/超时原因（展示用） */
+  reason?: string;
 }
 
 export interface BuildResult {
@@ -57,6 +75,94 @@ function patchTask(id: string, patch: Partial<BuildTask>) {
   if (!t) return;
   taskMap.set(id, { ...t, ...patch, updatedAt: Date.now() });
   emit();
+}
+
+// --- 制品回查轮询（构建 done 后 30s 首查，每 30s 一次，最多 40 次 / 20 分钟超时） ---
+const ARTIFACT_FIRST_DELAY_MS = 30_000;
+const ARTIFACT_POLL_INTERVAL_MS = 30_000;
+const ARTIFACT_MAX_POLL = 40;
+
+const artifactPollers = new Map<
+  string,
+  { first?: ReturnType<typeof setTimeout>; loop?: ReturnType<typeof setInterval> }
+>();
+
+/** 停止某任务的制品轮询（幂等） */
+function stopArtifactPolling(id: string): void {
+  const timers = artifactPollers.get(id);
+  if (!timers) return;
+  if (timers.first) clearTimeout(timers.first);
+  if (timers.loop) clearInterval(timers.loop);
+  artifactPollers.delete(id);
+}
+
+/** 更新制品状态（状态无变化不 patch，避免 updatedAt 抖动导致列表排序跳动） */
+function setArtifact(id: string, next: ArtifactState): void {
+  const cur = taskMap.get(id);
+  if (!cur) {
+    stopArtifactPolling(id);
+    return;
+  }
+  if (
+    cur.artifact?.status === next.status &&
+    cur.artifact.fileUrl === next.fileUrl &&
+    cur.artifact.reason === next.reason
+  ) {
+    return;
+  }
+  patchTask(id, { artifact: next });
+}
+
+/**
+ * 启动制品回查轮询（构建触发成功后调用）：
+ * 查询参数 app/branch/email/group 全带（branch 用 resolveBuildBranch 结果、email 模块级缓存）；
+ * succeed===1 成功 / ===2 进行中(继续轮询) / ===0 失败；email 获取失败直接置 fail，不阻塞构建结果。
+ */
+function startArtifactPolling(id: string, app: string, env: BuildEnv): void {
+  if (artifactPollers.has(id)) return;
+  setArtifact(id, { status: 'querying' });
+  let count = 0;
+  let branchCache: string | null = null;
+  const timers: { first?: ReturnType<typeof setTimeout>; loop?: ReturnType<typeof setInterval> } = {};
+  const tick = async () => {
+    if (!taskMap.has(id)) {
+      stopArtifactPolling(id);
+      return;
+    }
+    count += 1;
+    if (count > ARTIFACT_MAX_POLL) {
+      setArtifact(id, { status: 'timeout', reason: '制品查询超时（20 分钟）' });
+      stopArtifactPolling(id);
+      return;
+    }
+    try {
+      const email = await fetchCurrentEmail();
+      if (!branchCache) branchCache = await resolveBuildBranch(app, env);
+      const artifact = await fetchArtifact({ app, branch: branchCache, email, group: BUILD_GROUP });
+      if (!artifact) return; // 请求失败/无记录 → 下轮继续
+      if (artifact.succeed === 1) {
+        setArtifact(id, {
+          status: 'success',
+          fileUrl: artifact.fileUrl ?? undefined,
+          reason: artifact.fileUrl ? undefined : '成功但未返回制品链接',
+        });
+        stopArtifactPolling(id);
+      } else if (artifact.succeed === 0) {
+        setArtifact(id, { status: 'fail', reason: '构建失败，请到构建记录页查看日志' });
+        stopArtifactPolling(id);
+      }
+      // succeed === 2 进行中 → 继续轮询
+    } catch (err) {
+      // email 获取失败（未登录）等异常 → 制品状态置 fail，不阻塞构建结果
+      setArtifact(id, { status: 'fail', reason: `${(err as Error).message}，可到设置页检查登录状态后重新构建` });
+      stopArtifactPolling(id);
+    }
+  };
+  timers.first = setTimeout(() => {
+    void tick();
+    timers.loop = setInterval(() => void tick(), ARTIFACT_POLL_INTERVAL_MS);
+  }, ARTIFACT_FIRST_DELAY_MS);
+  artifactPollers.set(id, timers);
 }
 
 /**
@@ -99,11 +205,14 @@ export function startBuildTask(reqName: string, app: string, env: BuildEnv): Pro
         return finish('cancelled', { detail: '已取消' }, { ok: false, detail: '已取消' });
       }
       if (r.ok) {
-        return finish(
+        const result = finish(
           'done',
           { detail: r.detail, recordUrl: r.recordUrl },
           { ok: true, detail: r.detail, recordUrl: r.recordUrl },
         );
+        // 构建触发成功 → 启动制品回查轮询（30s 首查，每 30s，20 分钟超时）
+        startArtifactPolling(id, app, env);
+        return result;
       }
       // 登录态失效：直接失败，不再轮询
       if (r.status === 401 || r.status === 403) {
@@ -144,22 +253,25 @@ export function startBuildTask(reqName: string, app: string, env: BuildEnv): Pro
   return run();
 }
 
-/** 取消单个构建任务（仅对进行中 / 等待中的任务有效） */
+/** 取消单个构建任务（仅对进行中 / 等待中的任务有效）；同步清理制品轮询 */
 export function cancelBuildTask(id: string): void {
   controls.get(id)?.cancel();
+  stopArtifactPolling(id);
 }
 
-/** 从列表中移除某任务（用于清理已完成 / 已取消 / 失败的历史记录） */
+/** 从列表中移除某任务（用于清理已完成 / 已取消 / 失败的历史记录）；同步清理制品轮询 */
 export function removeBuildTask(id: string): void {
   taskMap.delete(id);
   controls.delete(id);
+  stopArtifactPolling(id);
   emit();
 }
 
-/** 清空全部任务记录 */
+/** 清空全部任务记录；同步清理全部制品轮询 */
 export function clearBuildTasks(): void {
   taskMap.clear();
   controls.clear();
+  Array.from(artifactPollers.keys()).forEach((id) => stopArtifactPolling(id));
   emit();
 }
 

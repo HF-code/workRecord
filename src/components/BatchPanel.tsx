@@ -20,6 +20,7 @@ import {
   type MrSkipped,
   type MrTarget,
 } from '../batch';
+import ArtifactList from './ArtifactList';
 
 interface Props {
   /** 选中的需求（全量数据，不受筛选影响） */
@@ -226,6 +227,9 @@ export default function BatchPanel({
           )}
         </ListCard>
       </div>
+
+      {/* 制品清单：与全局构建任务同源，构建完成后自动回查展示 file_url */}
+      <ArtifactList />
 
       {/* 下半：逐需求小框，项目+分支可 X 临时排除 */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

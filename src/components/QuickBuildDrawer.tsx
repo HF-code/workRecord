@@ -14,6 +14,7 @@ import type { BranchConfig } from '../config/branches';
 import { getDefaultBranch } from '../config/branches';
 import { getCsrfToken, type BuildEnv } from '../build';
 import { startBuildTask } from '../hooks/useBuildTasks';
+import ArtifactList from './ArtifactList';
 
 interface Props {
   open: boolean;
@@ -385,6 +386,9 @@ export default function QuickBuildDrawer({ open, onClose, branches, apps }: Prop
                 )}
               </div>
             </div>
+
+            {/* 制品清单：与全局构建任务同源，构建完成后自动回查展示 file_url */}
+            <ArtifactList />
 
             {/* 批次小框（下）：每次录入一批一个框，行可 X 删除，可整体从汇总去除/恢复 */}
             <Space direction="vertical" size={8} style={{ width: '100%' }}>

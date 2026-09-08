@@ -16,6 +16,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: true,
       },
+      // 钉钉绑定 API（/api/dingtalk/*）本地联调转发到 mywork-server；生产同源托管无需此项
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
 });
