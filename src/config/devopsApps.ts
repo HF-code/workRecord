@@ -17,6 +17,11 @@ export interface DevopsApp {
   group: DevopsGroup;
   /** Git 仓库地址，非必填，配置页手填 */
   gitUrl?: string;
+  /**
+   * 不参与构建：批量/单卡/快速构建默认跳过该项目（如小程序固定不纳入构建）。
+   * 卡片/批量面板中可临时「仍构建」覆盖，不污染配置。
+   */
+  excludeFromBuild?: boolean;
 }
 
 export const DEVOPS_GROUPS: DevopsGroup[] = ['JenkinsFrontweb', 'JenkinsPAAS'];
@@ -88,7 +93,7 @@ export const DEFAULT_DEVOPS_APPS: DevopsApp[] = [
   { app: 'vzan-pic-live', alias: 'PC图片直播', group: 'JenkinsFrontweb' },
   { app: 'vzanlivemobile', alias: '新微信端h5', group: 'JenkinsFrontweb', gitUrl: 'https://gitlab.vzan.com/front-end/live/vzanlivemobile' },
   { app: 'vzanlivepc', alias: 'vzanlivepc', group: 'JenkinsFrontweb' },
-  { app: 'vzanlive_weapp', alias: '微赞直播小程序', group: 'JenkinsFrontweb' },
+  { app: 'vzanlive_weapp', alias: '微赞直播小程序', group: 'JenkinsFrontweb', excludeFromBuild: true },
   { app: 'weistream_admin_web', alias: '海外直播开放平台-管理后台', group: 'JenkinsFrontweb', gitUrl: 'https://gitlab.vzan.com/weistream/weistream_admin' },
   { app: 'weistream_com', alias: '海外直播开放平台-官网', group: 'JenkinsFrontweb', gitUrl: 'https://gitlab.vzan.com/weistream/weistream_com' },
   { app: 'weistream_web', alias: '海外直播开放平台-流分发前端', group: 'JenkinsFrontweb', gitUrl: 'https://gitlab.vzan.com/weistream/weistream_web' },

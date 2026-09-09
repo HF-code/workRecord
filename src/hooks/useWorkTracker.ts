@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import type { Requirement } from '../types';
+import type { Requirement, Track } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import type { BranchConfig } from '../config/branches';
 import { DEFAULT_BRANCHES } from '../config/branches';
 import type { BuildEnv } from '../build';
+import { backfillRequirement, trackTargetOf } from '../config/track';
 import {
   loadBranches,
   loadDevopsApps,
   loadDevopsSyncedAt,
   loadRequirements,
+  migrateDevopsAppsExcludeFlag,
   migrateLegacyBuildPlan,
   saveBranches,
   saveDevopsApps,
@@ -16,6 +18,24 @@ import {
   saveRequirements,
 } from '../storage';
 import type { RequirementFormValues } from '../components/RequirementForm';
+
+/** 一次性双轨迁移标记 key（迁移完成后写入，此后不再执行，避免覆盖用户手动移除的轨） */
+const DUAL_TRACK_MIGRATED_KEY = 'work-tracker:dual-track:migrated:v1';
+
+/** 一次性迁移：把旧单流水线数据拆到双轨（首启执行；幂等，完成后打标记） */
+function migrateToDualTrackOnce(): void {
+  try {
+    if (localStorage.getItem(DUAL_TRACK_MIGRATED_KEY)) return;
+    const list = loadRequirements();
+    const results = list.map(backfillRequirement);
+    if (results.some((r) => r.changed)) {
+      saveRequirements(results.map((r) => r.next));
+    }
+    localStorage.setItem(DUAL_TRACK_MIGRATED_KEY, '1');
+  } catch {
+    // 迁移失败不影响主流程
+  }
+}
 
 /** 生成 UUID，兼容不支持 crypto.randomUUID 的环境（如 file:// 或非安全上下文） */
 function genId(): string {
@@ -29,82 +49,17 @@ function genId(): string {
   });
 }
 
-/** 数组内移动元素（from 移到 to），索引非法或相同则返回原数组引用 */
-function arrayMove<T>(list: T[], from: number, to: number): T[] {
-  if (from < 0 || to < 0 || from === to || from >= list.length || to >= list.length) return list;
-  const next = list.slice();
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  return next;
-}
-
 export function useRequirements() {
   const [requirements, setRequirements] = useState<Requirement[]>(() => {
     migrateLegacyBuildPlan();
+    // 一次性静默迁移：旧单流水线数据拆到双轨（含旧流水线类型决定隐藏哪条轨）
+    migrateToDualTrackOnce();
     return loadRequirements();
   });
 
   useEffect(() => {
     saveRequirements(requirements);
   }, [requirements]);
-
-  /** 拖拽排序：把 activeId 行移动到 overId 行的位置（在完整列表上重排，兼容筛选视图内拖拽） */
-  const reorder = (activeId: string, overId: string) => {
-    setRequirements((list) =>
-      arrayMove(
-        list,
-        list.findIndex((r) => r.id === activeId),
-        list.findIndex((r) => r.id === overId),
-      ),
-    );
-  };
-
-  /**
-   * 一次性按发版时间自动重排（真实改动数据顺序并持久化，之后可继续手动拖拽微调）：
-   * 未发布在前、已发布在后（保持"已发布沉底"不变量），各组内按发版时间排，无发版时间垫底。
-   * sort 为稳定排序，同日期保持原有相对顺序。
-   */
-  const sortByReleaseDate = (mode: 'releaseDesc' | 'releaseAsc') => {
-    setRequirements((list) => {
-      const dated = list.filter((r): r is Requirement & { releaseDate: string } => r.releaseDate !== null);
-      const undated = list.filter((r) => r.releaseDate === null);
-      // releaseDate 为 'YYYY-MM-DD'，字符串比较即日期比较
-      dated.sort((a, b) =>
-        mode === 'releaseDesc'
-          ? b.releaseDate.localeCompare(a.releaseDate)
-          : a.releaseDate.localeCompare(b.releaseDate),
-      );
-      const sorted = [...dated, ...undated];
-      // 未发布在前、已发布在后
-      return [...sorted.filter((r) => r.status !== '已发布'), ...sorted.filter((r) => r.status === '已发布')];
-    });
-  };
-
-  /**
-   * 状态切为「已发布」时沉底：从列表末尾往前找第一条非已发布的需求，
-   * 插到它后面（即尾部连续「已发布」区的最前面）。
-   * 不能用"第一条已发布之前"定位——已发布可能被手动拖拽到前面，
-   * 只有从末尾往前数的连续已发布段才是真正的"沉底区"。
-   */
-  const moveToPublishedTop = (id: string) => {
-    setRequirements((list) => {
-      const from = list.findIndex((r) => r.id === id);
-      if (from < 0) return list;
-      // 从末尾往前找最后一条非已发布（此时自身状态已更新为已发布，扫描会跳过自己）
-      let anchor = -1;
-      for (let i = list.length - 1; i >= 0; i--) {
-        if (list[i].status !== '已发布') {
-          anchor = i;
-          break;
-        }
-      }
-      // 插入位置 = anchor 之后；全是已发布（anchor = -1）则插到最前
-      const insertAt = anchor + 1;
-      // arrayMove 是"先删后插"：from 在 insertAt 之前时，删除后目标位置会前移 1
-      const to = from < insertAt ? insertAt - 1 : insertAt;
-      return arrayMove(list, from, to);
-    });
-  };
 
   const update = (id: string, patch: Partial<Requirement>) => {
     setRequirements((list) =>
@@ -121,18 +76,17 @@ export function useRequirements() {
     }));
     if (editingId) {
       const existing = requirements.find((r) => r.id === editingId);
-      // buildEnv 以表单提交值为准（表单回填了原值，用户可改），缺省兜底旧值
       update(editingId, {
         ...values,
         items,
-        buildEnv: values.buildEnv ?? existing?.buildEnv,
         buildItems: existing?.buildItems,
       });
       return true;
     }
     const now = new Date().toISOString();
     setRequirements((list) => [
-      { id: genId(), ...values, items, createdAt: now, updatedAt: now },
+      // 新需求默认双轨可见（未开始态），用户可在卡片上 X 掉不参与的轨
+      { id: genId(), ...values, items, envWeizan: null, envStar: null, createdAt: now, updatedAt: now },
       ...list,
     ]);
     return false;
@@ -159,11 +113,22 @@ export function useRequirements() {
     return fresh;
   };
 
-  return { requirements, upsert, update, remove, removeMany, merge, reorder, moveToPublishedTop, sortByReleaseDate };
+  return {
+    requirements,
+    upsert,
+    update,
+    remove,
+    removeMany,
+    merge,
+  };
 }
 
 export function useDevopsApps() {
-  const [apps, setApps] = useState<DevopsApp[]>(() => loadDevopsApps());
+  const [apps, setApps] = useState<DevopsApp[]>(() => {
+    // 一次性迁移：本地已存数据补 vzanlive_weapp 的不参与构建标记（幂等）
+    migrateDevopsAppsExcludeFlag();
+    return loadDevopsApps();
+  });
   const [syncedAt, setSyncedAt] = useState<string | null>(() => loadDevopsSyncedAt());
 
   useEffect(() => {
@@ -228,47 +193,24 @@ export function useBranches() {
   return { branches, save, reset };
 }
 
-/** 构建计划：复用每条需求上的 buildEnv / buildItems 字段（与需求列表同表存储） */
-export function useBuildPlan(update: (id: string, patch: Partial<Requirement>) => void, defaultBranch: BuildEnv) {
-  // 取分支配置，用于把目标分支映射为「构建命令」（build_other）
+/** 构建计划：按轨取/设构建与 MR 的目标环境（显式值优先，缺省按轨阶段推导） */
+export function useBuildPlan(update: (id: string, patch: Partial<Requirement>) => void) {
+  // 取分支配置，用于把目标环境映射为「构建命令」（build_other）
   const { branches } = useBranches();
 
-  /** 取某需求的目标分支（整需求共用），缺省为全局默认分支 */
-  const getEnv = (req: Requirement): BuildEnv => {
-    return req.buildEnv ?? defaultBranch;
-  };
+  /** 取某需求某轨的构建/MR 目标环境 */
+  const getTarget = (req: Requirement, track: Track): BuildEnv => trackTargetOf(req, track);
 
-  /** 取某需求的构建命令（运维平台 build_other 字段）：优先分支配置 buildOther，缺省回退目标分支 */
-  const getBuildOther = (req: Requirement): string => {
-    const env = req.buildEnv ?? defaultBranch;
+  /** 取某目标环境对应的构建命令（运维平台 build_other 字段）：优先分支配置 buildOther，缺省回退环境本身 */
+  const getBuildOther = (env: BuildEnv): string => {
     const cfg = branches.find((b) => b.value === env);
     return (cfg?.buildOther && cfg.buildOther.trim()) || env;
   };
 
-  const setEnv = (req: Requirement, env: BuildEnv) => {
-    update(req.id, { buildEnv: env });
+  /** 显式设置某轨的构建/MR 目标环境 */
+  const setTarget = (req: Requirement, track: Track, env: BuildEnv) => {
+    update(req.id, track === 'weizan' ? { targetWeizan: env } : { targetStar: env });
   };
 
-  /** 取某需求勾选的项目 itemId 集合；未记录过（undefined）视为全选 */
-  const getSelected = (req: Requirement): Set<string> => {
-    if (req.buildItems === undefined) return new Set(req.items.map((it) => it.id));
-    return new Set(req.buildItems);
-  };
-
-  const setSelectedFor = (req: Requirement, itemIds: string[]) => {
-    update(req.id, { buildItems: itemIds });
-  };
-
-  const toggleItem = (req: Requirement, itemId: string, checked: boolean) => {
-    const cur = getSelected(req);
-    if (checked) cur.add(itemId);
-    else cur.delete(itemId);
-    setSelectedFor(req, [...cur]);
-  };
-
-  const toggleAll = (req: Requirement, checked: boolean) => {
-    setSelectedFor(req, checked ? req.items.map((it) => it.id) : []);
-  };
-
-  return { getEnv, getBuildOther, setEnv, getSelected, toggleItem, toggleAll };
+  return { getTarget, getBuildOther, setTarget };
 }

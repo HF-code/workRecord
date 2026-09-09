@@ -12,6 +12,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
 } from 'antd';
 import { PlusOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -149,6 +150,23 @@ export default function ProjectConfigPage() {
       key: 'gitUrl',
       render: (gitUrl: string | undefined, record) => (
         <GitUrlInput value={gitUrl} onSave={(v) => update(record.app, { gitUrl: v || undefined })} />
+      ),
+    },
+    {
+      title: (
+        <Tooltip title="批量 / 单卡 / 快速构建默认跳过该项目（如固定不纳入构建的小程序）；卡片与批量面板可临时「仍构建」">
+          不参与构建
+        </Tooltip>
+      ),
+      dataIndex: 'excludeFromBuild',
+      key: 'excludeFromBuild',
+      width: 110,
+      render: (excluded: boolean | undefined, record) => (
+        <Switch
+          checked={!!excluded}
+          onChange={(v) => update(record.app, { excludeFromBuild: v })}
+          data-testid={`project-config-exclude-switch-${record.app}`}
+        />
       ),
     },
     {

@@ -14,12 +14,14 @@ import {
   collectBuildTargets,
   collectMrTargets,
   getBatchItems,
+  isBuildExcluded,
   summarize,
   type BuildPlan,
   type BuildTarget,
   type MrSkipped,
   type MrTarget,
 } from '../batch';
+import { startedTracks, TRACK_LABELS } from '../config/track';
 import { copyText } from '../utils/clipboard';
 import ArtifactList from './ArtifactList';
 
@@ -30,7 +32,11 @@ interface Props {
   buildPlan: BuildPlan;
   /** 临时排除项：reqId → 被 X 的 itemId 列表 */
   excluded: Record<string, string[]>;
+  /** 临时恢复项：reqId → 项目配置排除但被点「仍构建」的 itemId 列表 */
+  included: Record<string, string[]>;
   onRemoveItem: (reqId: string, itemId: string) => void;
+  /** 恢复被项目配置默认排除的项（仍构建，仅本次批量生效） */
+  onIncludeItem: (reqId: string, itemId: string) => void;
   onClearSelection: () => void;
   onBatchMr: (targets: MrTarget[], skipped: MrSkipped[]) => void;
   onBatchBuild: (builds: BuildTarget[], dupCount: number) => void;
@@ -87,7 +93,9 @@ export default function BatchPanel({
   apps,
   buildPlan,
   excluded,
+  included,
   onRemoveItem,
+  onIncludeItem,
   onClearSelection,
   onBatchMr,
   onBatchBuild,
@@ -97,16 +105,16 @@ export default function BatchPanel({
 
   // 汇总/去重/统计全部由纯函数计算，UI 只渲染（依赖变化时重算）
   const { targets, skipped } = useMemo(
-    () => collectMrTargets(reqs, apps, buildPlan, excluded),
-    [reqs, apps, buildPlan, excluded],
+    () => collectMrTargets(reqs, apps, buildPlan, excluded, included),
+    [reqs, apps, buildPlan, excluded, included],
   );
   const { builds, dupCount } = useMemo(
-    () => collectBuildTargets(reqs, buildPlan, excluded),
-    [reqs, buildPlan, excluded],
+    () => collectBuildTargets(reqs, apps, buildPlan, excluded, included),
+    [reqs, apps, buildPlan, excluded, included],
   );
   const summary = useMemo(
-    () => summarize(reqs, buildPlan, excluded, skipped.length),
-    [reqs, buildPlan, excluded, skipped.length],
+    () => summarize(reqs, apps, buildPlan, excluded, skipped.length, included),
+    [reqs, apps, buildPlan, excluded, skipped.length, included],
   );
 
   if (reqs.length === 0) return null;
@@ -133,6 +141,10 @@ export default function BatchPanel({
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
+        // 滚动吸顶：内容区整体滚动时批量面板固定在顶部（卡片从其下方滚过）
+        position: 'sticky',
+        top: 8,
+        zIndex: 5,
       }}
     >
       {/* 上半：统计 + 按钮行 */}
@@ -143,6 +155,13 @@ export default function BatchPanel({
             <span style={{ color: '#fa8c16', marginLeft: 8 }}>
               {summary.skippedCount} 项将跳过
             </span>
+          ) : null}
+          {summary.configExcludedCount > 0 ? (
+            <Tooltip title="项目配置中标记为「不参与构建」的项目已默认排除，下方清单可点「仍构建」恢复">
+              <span style={{ color: '#888', marginLeft: 8, fontWeight: 400 }}>
+                （已按项目配置跳过 {summary.configExcludedCount} 个）
+              </span>
+            </Tooltip>
           ) : null}
           {dupCount > 0 ? (
             <span style={{ color: '#888', marginLeft: 8, fontWeight: 400 }}>
@@ -194,7 +213,7 @@ export default function BatchPanel({
                 <Typography.Text strong style={{ fontSize: 12 }}>
                   {b.project}
                 </Typography.Text>
-                <span> → {b.env}</span>
+                <span>（{TRACK_LABELS[b.track]}） → {b.env}</span>
               </div>
             ))
           )}
@@ -208,13 +227,13 @@ export default function BatchPanel({
             <>
               {targets.map((t) => (
                 <a
-                  key={`${t.reqId}:${t.itemId}`}
+                  key={`${t.reqId}:${t.track}:${t.itemId}`}
                   href={t.url}
                   target="_blank"
                   rel="noreferrer"
                   style={{ fontSize: 12, lineHeight: '20px', wordBreak: 'break-all' }}
                 >
-                  {t.project}：{t.branch} → {t.env}
+                  {TRACK_LABELS[t.track]} {t.project}：{t.branch} → {t.env}
                 </a>
               ))}
               {skipped.map((s, i) => (
@@ -232,12 +251,17 @@ export default function BatchPanel({
       {/* 制品清单：与全局构建任务同源，构建完成后自动回查展示 file_url */}
       <ArtifactList />
 
-      {/* 下半：逐需求小框，项目+分支可 X 临时排除 */}
+      {/* 下半：逐需求小框——有效项可 X 临时排除；配置排除项灰显可「仍构建」 */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {reqs.map((req) => {
-          const items = getBatchItems(req, excluded);
-          // 构建目标 env 展示：整需求共用
-          const env = buildPlan.getEnv(req);
+          const items = getBatchItems(req, excluded, apps, included);
+          // 被项目配置默认排除且未被恢复的项（含「仍构建」入口）
+          const configExcludedItems = req.items.filter(
+            (it) =>
+              !excluded[req.id]?.includes(it.id) &&
+              isBuildExcluded(apps, it.project) &&
+              !included[req.id]?.includes(it.id),
+          );
           return (
             <div
               key={req.id}
@@ -253,27 +277,59 @@ export default function BatchPanel({
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, wordBreak: 'break-all' }}>
                 {req.name}
                 <span style={{ color: '#999', fontWeight: 400 }}>
-                  （{items.length} 项 · {env}）
+                  （{items.length} 项 ·{' '}
+                  {startedTracks(req)
+                    .map((t) => `${TRACK_LABELS[t]}→${buildPlan.getTarget(req, t)}`)
+                    .join(' / ') || '未开始轨'}
+                  ）
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {items.length === 0 ? (
+                {items.length === 0 && configExcludedItems.length === 0 ? (
                   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无" style={{ margin: 0 }} />
                 ) : (
-                  items.map((it) => (
-                    <Tag
-                      key={it.id}
-                      closable
-                      onClose={(e) => {
-                        // 阻止默认隐藏，由状态驱动（页面层会同步联动卡片勾选）
-                        e.preventDefault();
-                        onRemoveItem(req.id, it.id);
-                      }}
-                      style={{ marginInlineEnd: 0, fontSize: 12 }}
-                    >
-                      {it.project} {it.branch}
-                    </Tag>
-                  ))
+                  <>
+                    {items.map((it) => (
+                      <Tag
+                        key={it.id}
+                        closable
+                        onClose={(e) => {
+                          // 阻止默认隐藏，由状态驱动（页面层会同步联动卡片勾选）
+                          e.preventDefault();
+                          onRemoveItem(req.id, it.id);
+                        }}
+                        style={{ marginInlineEnd: 0, fontSize: 12 }}
+                      >
+                        {it.project} {it.branch}
+                      </Tag>
+                    ))}
+                    {configExcludedItems.map((it) => (
+                      <Tooltip key={it.id} title="项目配置中标记为不参与构建，点击「仍构建」本次批量包含它">
+                        <Tag
+                          style={{
+                            marginInlineEnd: 0,
+                            fontSize: 12,
+                            color: '#bbb',
+                            borderColor: '#f0f0f0',
+                            textDecoration: 'line-through',
+                          }}
+                        >
+                          {it.project} {it.branch}
+                        </Tag>
+                      </Tooltip>
+                    ))}
+                    {configExcludedItems.length > 0 && (
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ height: 'auto', fontSize: 12, padding: 0 }}
+                        onClick={() => configExcludedItems.forEach((it) => onIncludeItem(req.id, it.id))}
+                        data-testid={`batch-include-excluded-button-${req.id}`}
+                      >
+                        仍构建（{configExcludedItems.length}）
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
             </div>

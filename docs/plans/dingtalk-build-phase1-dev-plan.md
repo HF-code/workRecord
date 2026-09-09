@@ -22,7 +22,7 @@
   - `queryArtifact(cookie, { app, branch, email, group })`：`GET /deploy/build?page_no=1&page_size=10&app&branch&email&group` → 解析 `detail[0]` 的 `{ file_url, succeed }`。
   - 头处理同 A3（cookie / x-csrftoken / Origin / Referer）。
 - [ ] **B2 buildJobs.ts**：任务表 `jobId ↔ { email, project, env, branch, group, number, status, fileUrl, detail }`；内存 Map + 持久化到 `data/buildJobs.json`（可选，重启恢复轮询）。
-- [ ] **B3 轮询器 poller**：构建提交成功后**延迟 30s 才开始第一次查询**（`setTimeout(30_000)` 首次 + `setInterval(30_000)` 后续），调 `queryArtifact`（app/branch/email/group 四个参数全带）；`succeed===2` 成功 / `succeed===0` 失败 / `===1` 继续；终态时回调钉钉推送，停止轮询；**20 分钟（40 次）超时兜底**，超时按失败处理并推送提示。单进程内存管理，重启后按 `buildJobs.json` 恢复未完成任务（恢复时同样先等 30s）。
+- [ ] **B3 轮询器 poller**：构建提交成功后**延迟 30s 才开始第一次查询**（`setTimeout(30_000)` 首次 + `setInterval(30_000)` 后续），调 `queryArtifact`（app/branch/email/group 四个参数全带）；**接口语义（接口.demo）：`succeed===1` 成功 / `succeed===0` 失败 / `===2` 进行中继续**；终态时回调钉钉推送，停止轮询；**20 分钟（40 次）超时兜底**，超时按失败处理并推送提示。单进程内存管理，重启后按 `buildJobs.json` 恢复未完成任务（恢复时同样先等 30s）。
 
 ### C. 钉钉接入
 - [ ] **C1 dingtalk.ts（加签校验）**：`POST /api/dingtalk` 入口，校验 `timestamp + sign`（HMAC-SHA256 over `timestamp+"\n"+appSecret`，base64）与 header `sign` 比对，非法直接 401。
@@ -68,7 +68,7 @@
   - `BuildTask` 增加 `artifact?: { status: 'querying'|'success'|'fail'|'timeout'; fileUrl?: string }`。
   - 任务 `phase` 变为 `done` 时启动制品轮询：**延迟 30s 首查，之后每 30s 一次，最多 20 分钟（40 次）**；
     查询参数 `app/branch/email/group` 全带（branch 用 `resolveBuildBranch` 解析结果，email 用 G1 缓存值，group 用 `BUILD_GROUP`）；
-    `succeed===2` → success + fileUrl；`===0` → fail；超时 → timeout；结果 `patchTask` 回 taskMap。
+    `succeed===1` → success + fileUrl；`===0` → fail；`===2` 进行中继续；超时 → timeout；结果 `patchTask` 回 taskMap。
   - `cancelBuildTask` / `removeBuildTask` / `clearBuildTasks` 时同步清理该任务的制品轮询 timer。
   - email 获取失败（未登录）→ 制品状态直接置 fail（提示到设置页/重新登录），不阻塞构建结果。
 - [ ] **G3 `mywork-server` 透传扩展（生产路径）**：

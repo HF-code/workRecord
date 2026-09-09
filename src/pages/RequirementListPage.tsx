@@ -1,67 +1,114 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { App as AntdApp, Badge, Button, Card, Drawer, Empty, Space, Tag, Typography, Upload } from 'antd';
-import { BarChartOutlined, PlusOutlined, UploadOutlined, ContainerOutlined, ThunderboltOutlined } from '@ant-design/icons';
-import type { Requirement, SortMode, Status } from '../types';
+import { App as AntdApp, Badge, Button, Card, Empty, Space, Switch, Typography, Upload } from 'antd';
+import {
+  BarChartOutlined,
+  ImportOutlined,
+  PlusOutlined,
+  ToolOutlined,
+} from '@ant-design/icons';
+import type { Requirement, Track } from '../types';
 import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
-import { useDevopsApps, useBranches, useBuildPlan, useRequirements } from '../hooks/useWorkTracker';
-import { getDefaultBranch } from '../config/branches';
+import { useDevopsApps, useBuildPlan, useRequirements } from '../hooks/useWorkTracker';
+import { ALL_ENVS, TRACK_LABELS, overallStatus, trackEnvOf } from '../config/track';
 import RequirementForm, { type RequirementFormValues } from '../components/RequirementForm';
 import RequirementCardGrid from '../components/RequirementCardGrid';
+import BuildPanel from '../components/BuildPanel';
 import BatchPanel from '../components/BatchPanel';
 import StatsBar from '../components/StatsBar';
 import ProjectStatsModal from '../components/ProjectStatsModal';
 import FilterBar, { type FilterValue } from '../components/FilterBar';
-import { useBuildTasks, startBuildTask, type BuildTaskPhase } from '../hooks/useBuildTasks';
-import { getCsrfToken } from '../build';
+import { useBuildTasks, startBuildTask } from '../hooks/useBuildTasks';
+import { getCsrfToken, buildMergeRequestUrl, type BuildEnv } from '../build';
 import { getBatchItems, type BuildTarget, type MrSkipped, type MrTarget } from '../batch';
 
 const INITIAL_FILTER: FilterValue = {
-  statuses: [],
   project: undefined,
-  releaseDateRange: null,
+  releaseDate: null,
   keyword: '',
+  currentEnv: null,
 };
 
+/** 发版日分组结果：date = 'YYYY-MM-DD'（null 组置底） */
+interface ReleaseGroup {
+  date: string | null;
+  reqs: Requirement[];
+}
+
 export default function RequirementListPage() {
-  const navigate = useNavigate();
   const { message, modal } = AntdApp.useApp();
-  const { requirements, upsert, update, remove, removeMany, merge, reorder, moveToPublishedTop, sortByReleaseDate } =
-    useRequirements();
+  const {
+    requirements,
+    upsert,
+    update,
+    remove,
+    removeMany,
+    merge,
+  } = useRequirements();
   const devopsApps = useDevopsApps();
-  const { branches } = useBranches();
-  const buildPlan = useBuildPlan(update, getDefaultBranch(branches));
-  const { tasks, activeCount, cancelTask, removeTask, clear } = useBuildTasks();
+  const buildPlan = useBuildPlan(update);
+  const { tasks, activeCount } = useBuildTasks();
+
+  // 常驻右侧构建面板（默认展开）
+  const [buildPanelOpen, setBuildPanelOpen] = useState(true);
+  // 是否显示已发布（整体派生状态 = 已发布的需求）；默认开
+  const [showPublished, setShowPublished] = useState(true);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
-  const [sortMode, setSortMode] = useState<SortMode>('manual');
 
-  // 批量选择状态（与 buildItems 两套数据）：卡片勾选 + 面板 X 的临时排除
+  // 批量选择状态：卡片勾选 + 面板 X 的临时排除 / 配置排除的临时恢复
   const [selectedReqIds, setSelectedReqIds] = useState<Set<string>>(new Set());
   const [batchExcluded, setBatchExcluded] = useState<Record<string, string[]>>({});
+  const [batchIncluded, setBatchIncluded] = useState<Record<string, string[]>>({});
   const [batchBuilding, setBatchBuilding] = useState(false);
 
   const filtered = useMemo(() => {
     const kw = filter.keyword.trim().toLowerCase();
     return requirements.filter((r) => {
-      if (filter.statuses.length > 0 && !filter.statuses.includes(r.status)) return false;
+      // 不显示已发布时，过滤掉整体派生状态为已发布的需求
+      if (!showPublished && overallStatus(r) === '已发布') return false;
       if (filter.project && !r.items.some((it) => it.project === filter.project)) return false;
+      if (filter.releaseDate && r.releaseDate !== filter.releaseDate) return false;
+      // 已达环境筛选（任一轨当前阶段命中）
       if (
-        filter.releaseDateRange &&
-        (r.releaseDate === null ||
-          r.releaseDate < filter.releaseDateRange[0] ||
-          r.releaseDate > filter.releaseDateRange[1])
+        filter.currentEnv &&
+        trackEnvOf(r, 'weizan') !== filter.currentEnv &&
+        trackEnvOf(r, 'star') !== filter.currentEnv
       ) {
         return false;
       }
       if (kw && !r.name.toLowerCase().includes(kw)) return false;
       return true;
     });
-  }, [requirements, filter]);
+  }, [requirements, filter, showPublished]);
+
+  /** 发版日期下拉选项：全部需求已填日期去重（降序，新→旧） */
+  const dateOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of requirements) if (r.releaseDate) set.add(r.releaseDate);
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [requirements]);
+
+  /** 按发版日期分组（降序：最新发版在前；未填发版日期组置底；组内保持数据顺序） */
+  const groups = useMemo<ReleaseGroup[]>(() => {
+    const map = new Map<string, Requirement[]>();
+    const noneList: Requirement[] = [];
+    for (const r of filtered) {
+      if (r.releaseDate) {
+        const list = map.get(r.releaseDate) ?? [];
+        list.push(r);
+        map.set(r.releaseDate, list);
+      } else {
+        noneList.push(r);
+      }
+    }
+    const dated = [...map.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([date, reqs]) => ({ date, reqs }));
+    return noneList.length > 0 ? [...dated, { date: null, reqs: noneList }] : dated;
+  }, [filtered]);
 
   /** 批量面板基于全量选中需求（不受当前筛选影响，防"幽灵选择"） */
   const selectedReqs = useMemo(
@@ -69,66 +116,144 @@ export default function RequirementListPage() {
     [requirements, selectedReqIds],
   );
 
-  const statusOptions = useMemo(
-    () => [...new Set(requirements.map((r) => r.status))],
-    [requirements],
-  );
+  /** 老数据已在加载时一次性静默迁移（useWorkTracker → migrateToDualTrackOnce），无需按钮 */
 
-  /**
-   * 切换排序：发版时间排序为一次性真实重排数据（自动排），排完仍可继续手动拖拽；
-   * sortMode 仅作工具行指示——手动拖拽后自动熄灭（见 handleReorder）
-   */
-  const handleChangeSortMode = (mode: SortMode) => {
-    setSortMode(mode);
-    if (mode !== 'manual') sortByReleaseDate(mode);
+  /** 推进某轨阶段（卡片阶段 Select 共用入口）：
+   *  推进到新阶段时重置该轨「测试通过」标记（新阶段尚未测试）。 */
+  const handleAdvanceTrack = (reqId: string, track: Track, env: BuildEnv | null) => {
+    const req = requirements.find((r) => r.id === reqId);
+    if (!req) return;
+    const patch: Partial<Requirement> =
+      track === 'weizan'
+        ? { envWeizan: env, testPassWeizan: false }
+        : { envStar: env, testPassStar: false };
+    update(reqId, patch);
+    if (env == null) message.info(`【${req.name}】${TRACK_LABELS[track]}轨已重置为未开始`);
+    else message.success(`【${req.name}】${TRACK_LABELS[track]}轨 → ${env}`);
   };
 
-  /** 拖拽排序：数据重排 + 退出排序指示状态（工具行恢复中性，表示当前为手动顺序） */
-  const handleReorder = (activeId: string, overId: string) => {
-    if (sortMode !== 'manual') setSortMode('manual');
-    reorder(activeId, overId);
+  /** 切换某轨「测试通过」手动标记 */
+  const handleToggleTestPass = (reqId: string, track: Track, pass: boolean) => {
+    update(reqId, track === 'weizan' ? { testPassWeizan: pass } : { testPassStar: pass });
   };
 
-  const toggleStatusFilter = (status: Status) => {
-    setFilter((f) => ({
-      ...f,
-      statuses: f.statuses.includes(status)
-        ? f.statuses.filter((s) => s !== status)
-        : [...f.statuses, status],
-    }));
+  /** 显式设置某轨构建/MR 目标环境 */
+  const handleSetTarget = (reqId: string, track: Track, env: BuildEnv) => {
+    update(reqId, track === 'weizan' ? { targetWeizan: env } : { targetStar: env });
+  };
+
+  /** 移除某轨（卡片 X）：该需求不走此轨发布，卡片上可「+ xx轨」恢复 */
+  const handleRemoveTrack = (reqId: string, track: Track) => {
+    update(
+      reqId,
+      track === 'weizan'
+        ? { envWeizan: undefined, testPassWeizan: false, targetWeizan: undefined }
+        : { envStar: undefined, testPassStar: false, targetStar: undefined },
+    );
+    message.info(`已移除${TRACK_LABELS[track]}轨，可在卡片上重新添加`);
+  };
+
+  /** 某轨构建（卡片）：作用于该需求全部有效项目（排除「不参与构建」），目标=该轨目标环境 */
+  const handleTrackBuild = async (req: Requirement, track: Track) => {
+    if (!getCsrfToken()) {
+      message.warning('未登录运维平台，请先登录后再构建');
+      return;
+    }
+    const items = getBatchItems(req, {}, devopsApps.apps, {});
+    if (items.length === 0) {
+      message.warning('该需求无有效构建项目');
+      return;
+    }
+    const env = buildPlan.getTarget(req, track);
+    const buildOther = buildPlan.getBuildOther(env);
+    const results = await Promise.all(
+      items.map((it) => startBuildTask(req.name, it.project, env, buildOther, [req.id])),
+    );
+    let okCount = 0;
+    const fails: string[] = [];
+    let authFailed = false;
+    results.forEach((r, i) => {
+      const app = items[i].project;
+      if (r.ok) okCount += 1;
+      else if (r.status === 401 || r.status === 403) authFailed = true;
+      else if (r.detail === '已取消') {
+        // 用户主动取消，不额外提示
+      } else fails.push(`【${app}】${r.detail}`);
+    });
+    if (authFailed) {
+      message.error('登录态已失效，请重新登录运维平台');
+      return;
+    }
+    if (fails.length > 0) {
+      message.error(`构建失败：${fails.join('；')}`);
+      if (okCount > 0) message.success(`成功触发 ${okCount} 个项目构建`);
+      return;
+    }
+    if (okCount > 0) {
+      message.success(
+        `【${req.name}】${TRACK_LABELS[track]}轨已触发 ${okCount} 个项目构建（${env}）`,
+      );
+    }
+  };
+
+  /** 某轨提交 MR（卡片）：打开该需求全部有效项目到该轨目标环境的 GitLab 预填 MR 链接 */
+  const handleTrackMr = (req: Requirement, track: Track) => {
+    const env = buildPlan.getTarget(req, track);
+    const items = getBatchItems(req, {}, devopsApps.apps, {});
+    const skipped: string[] = [];
+    let opened = 0;
+    for (const it of items) {
+      const gitUrl = devopsApps.apps.find((a) => a.app === it.project)?.gitUrl;
+      if (!gitUrl) {
+        skipped.push(`【${it.project}】未配置 Git 仓库地址`);
+        continue;
+      }
+      if (!it.branch) {
+        skipped.push(`【${it.project}】未填写开发分支`);
+        continue;
+      }
+      window.open(buildMergeRequestUrl(gitUrl, it.branch, env), '_blank', 'noreferrer');
+      opened += 1;
+    }
+    if (opened > 0) {
+      message.success(`已打开 ${opened} 个 MR 页面（${TRACK_LABELS[track]} → ${env}），如被拦截请重试`);
+    }
+    if (skipped.length > 0) {
+      message.warning(`已跳过：${skipped.join('；')}`);
+    }
   };
 
   /**
    * 卡片勾选/取消（需求级批量选择）：
-   * 勾选卡片 = 该需求全部项目直接进入批量范围（不再依赖卡片内子勾选）；
-   * 勾选时清空该需求的临时排除（重新勾选 = 恢复全量参与）；取消时同步清空排除。
+   * 勾选卡片 = 该需求全部项目直接进入批量范围；
+   * 勾选时清空该需求的临时排除/恢复（重新勾选 = 恢复全量参与）；取消时同步清空。
    */
   const handleToggleSelect = (reqId: string, checked: boolean) => {
     if (checked) {
       setSelectedReqIds((s) => new Set(s).add(reqId));
-      setBatchExcluded((m) => {
-        if (!(reqId in m)) return m;
-        const next = { ...m };
-        delete next[reqId];
-        return next;
-      });
     } else {
       setSelectedReqIds((s) => {
         const next = new Set(s);
         next.delete(reqId);
         return next;
       });
-      setBatchExcluded((m) => {
-        if (!(reqId in m)) return m;
-        const next = { ...m };
-        delete next[reqId];
-        return next;
-      });
     }
+    setBatchExcluded((m) => {
+      if (!(reqId in m)) return m;
+      const next = { ...m };
+      delete next[reqId];
+      return next;
+    });
+    setBatchIncluded((m) => {
+      if (!(reqId in m)) return m;
+      const next = { ...m };
+      delete next[reqId];
+      return next;
+    });
   };
 
   /**
-   * 批量面板 X 掉某项目（仅本次生效，不回写 buildItems）；
+   * 批量面板 X 掉某项目（仅本次生效，不回写数据）；
    * 若该需求有效项清零 → 自动取消其卡片勾选并清空排除（用户拍板的联动规则）。
    */
   const handleRemoveItem = (reqId: string, itemId: string) => {
@@ -136,8 +261,8 @@ export default function RequirementListPage() {
     if (!req) return;
     setBatchExcluded((m) => {
       const next = { ...m, [reqId]: [...(m[reqId] ?? []), itemId] };
-      // 判断移除后该需求是否还有有效项目
-      const remaining = getBatchItems(req, next).length;
+      // 判断移除后该需求是否还有有效项目（含配置排除恢复项）
+      const remaining = getBatchItems(req, next, devopsApps.apps, batchIncluded).length;
       if (remaining === 0) {
         setSelectedReqIds((s) => {
           const sel = new Set(s);
@@ -151,9 +276,19 @@ export default function RequirementListPage() {
     });
   };
 
+  /** 批量面板「仍构建」：把被项目配置默认排除的项本次纳入批量（仅会话态） */
+  const handleIncludeItem = (reqId: string, itemId: string) => {
+    setBatchIncluded((m) => {
+      const list = m[reqId] ?? [];
+      if (list.includes(itemId)) return m;
+      return { ...m, [reqId]: [...list, itemId] };
+    });
+  };
+
   const handleClearSelection = () => {
     setSelectedReqIds(new Set());
     setBatchExcluded({});
+    setBatchIncluded({});
   };
 
   /** 批量 MR：全量打开 GitLab 预填页（同步循环），清单链接兜底浏览器拦截 */
@@ -167,7 +302,7 @@ export default function RequirementListPage() {
     }
   };
 
-  /** 批量构建：去重后逐个并入全局构建任务队列，汇总提示 */
+  /** 批量构建：去重后逐个并入全局构建任务队列，汇总提示（reqIds 供小灯/进度回写） */
   const handleBatchBuild = async (builds: BuildTarget[], dupCount: number) => {
     if (!getCsrfToken()) {
       message.warning('未登录运维平台，请先登录后再构建');
@@ -177,7 +312,7 @@ export default function RequirementListPage() {
     try {
       // 任务名合并展示来源需求（如"需求A、需求B"），复用任务 store 的轮询/重试/取消
       const results = await Promise.all(
-        builds.map((b) => startBuildTask(b.reqNames.join('、'), b.project, b.env, b.buildOther)),
+        builds.map((b) => startBuildTask(b.reqNames.join('、'), b.project, b.env, b.buildOther, b.reqIds)),
       );
       let okCount = 0;
       const fails: string[] = [];
@@ -205,7 +340,7 @@ export default function RequirementListPage() {
       }
       if (okCount > 0) {
         message.success(
-          `已触发 ${okCount} 个构建${dupCount > 0 ? `（合并去重 ${dupCount} 个）` : ''}，可在「构建任务」查看进度`,
+          `已触发 ${okCount} 个构建${dupCount > 0 ? `（合并去重 ${dupCount} 个）` : ''}，右侧面板可看进度`,
         );
       }
     } finally {
@@ -230,33 +365,25 @@ export default function RequirementListPage() {
 
   const handleSubmit = (values: RequirementFormValues) => {
     const isEdit = upsert(editing?.id ?? null, values);
-    // 编辑保存后状态变为「已发布」，同样沉到尾部已发布区最前（与卡片内切换行为一致）
-    if (editing && editing.status !== '已发布' && values.status === '已发布') {
-      moveToPublishedTop(editing.id);
-      message.info('已发布的需求已自动沉底');
-    }
     message.success(isEdit ? '已保存' : '登记成功');
     closeForm();
   };
 
-  /** 修改状态：切到「已发布」时自动沉底——移到尾部连续已发布区的最前面 */
-  const handleStatusChange = (id: string, status: Status) => {
-    update(id, { status });
-    if (status === '已发布') {
-      moveToPublishedTop(id);
-      message.info('已发布的需求已自动沉底');
-    }
-  };
-
   const handleDelete = (id: string) => {
     remove(id);
-    // 同步清掉批量选择与临时排除，避免残留
+    // 同步清掉批量选择与临时排除/恢复，避免残留
     setSelectedReqIds((s) => {
       const next = new Set(s);
       next.delete(id);
       return next;
     });
     setBatchExcluded((m) => {
+      if (!(id in m)) return m;
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
+    setBatchIncluded((m) => {
       if (!(id in m)) return m;
       const next = { ...m };
       delete next[id];
@@ -328,228 +455,191 @@ export default function RequirementListPage() {
     }
   };
 
-  return (
-    <Card>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 16,
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          工作记录
-        </Typography.Title>
-        <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateForm}>
-            登记需求
-          </Button>
-          <Upload
-            accept=".json,application/json"
-            showUploadList={false}
-            beforeUpload={(file) => {
-              void handleImportFile(file);
-              return false;
-            }}
-          >
-            <Button icon={<UploadOutlined />}>导入数据</Button>
-          </Upload>
-          <Button onClick={handleExportAll}>导出数据</Button>
-          <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
-          <Button icon={<ThunderboltOutlined />} onClick={() => navigate('/quick-build')}>
-            快速构建
-          </Button>
-          <Badge count={activeCount} size="small" offset={[-2, 2]}>
-            <Button
-              icon={<ContainerOutlined />}
-              onClick={() => setTasksOpen(true)}
-              data-testid="build-tasks-open-button"
-            >
-              构建任务
-            </Button>
-          </Badge>
-        </Space>
-      </div>
-
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: 16,
-          marginBottom: 16,
-        }}
-      >
-        <StatsBar
-          requirements={requirements}
-          activeStatuses={filter.statuses}
-          onToggle={toggleStatusFilter}
-        />
-        <Button
-          type="text"
-          icon={<BarChartOutlined />}
-          onClick={() => setStatsOpen(true)}
-          style={{ flexShrink: 0 }}
-        >
-          统计项目
-        </Button>
-      </div>
-
-      <FilterBar
-        value={filter}
-        onChange={setFilter}
-        statusOptions={statusOptions}
-        apps={devopsApps.apps}
-      />
-
-      {/* 批量操作区：选中需求 > 0 时显示（上半汇总去重 + 下半逐需求 X 排除） */}
-      <BatchPanel
-        reqs={selectedReqs}
-        apps={devopsApps.apps}
-        buildPlan={buildPlan}
-        excluded={batchExcluded}
-        onRemoveItem={handleRemoveItem}
-        onClearSelection={handleClearSelection}
-        onBatchMr={handleBatchMr}
-        onBatchBuild={handleBatchBuild}
-        batchBuilding={batchBuilding}
-      />
-
-      <RequirementCardGrid
-        data={filtered}
-        apps={devopsApps.apps}
-        branches={branches}
-        buildPlan={buildPlan}
-        selectedReqIds={selectedReqIds}
-        onToggleSelect={handleToggleSelect}
-        onEdit={openEditForm}
-        onDelete={handleDelete}
-        onChangeStatus={handleStatusChange}
-        onChangeReleaseDate={(id, releaseDate) => update(id, { releaseDate })}
-        onReorder={handleReorder}
-        sortMode={sortMode}
-        onChangeSortMode={handleChangeSortMode}
-      />
-
-      <RequirementForm
-        open={formOpen}
-        editing={editing}
-        apps={devopsApps.apps}
-        branches={branches}
-        onCancel={closeForm}
-        onSubmit={handleSubmit}
-      />
-
-      <ProjectStatsModal
-        open={statsOpen}
-        requirements={filtered}
-        onClose={() => setStatsOpen(false)}
-      />
-
-      <Drawer
-        title={`构建任务${activeCount > 0 ? `（进行中 ${activeCount}）` : ''}`}
-        open={tasksOpen}
-        onClose={() => setTasksOpen(false)}
-        width={460}
-        extra={
-          tasks.length > 0 ? (
-            <Button type="link" onClick={clear} data-testid="build-tasks-clear-button">
-              清空记录
-            </Button>
-          ) : null
-        }
-      >
-        {tasks.length === 0 ? (
-          <Empty description="暂无构建任务" />
-        ) : (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            {tasks.map((t) => (
-              <BuildTaskItem
-                key={t.id}
-                task={t}
-                onCancel={() => cancelTask(t.id)}
-                onRemove={() => removeTask(t.id)}
-              />
-            ))}
-          </Space>
-        )}
-      </Drawer>
-    </Card>
+  /** 空态（requirements 全空 vs 筛选无匹配） */
+  const emptyView = (
+    <Empty
+      description={
+        requirements.length === 0
+          ? '暂无需求，点击右上角「登记需求」开始'
+          : '当前筛选无匹配需求'
+      }
+      style={{ padding: '48px 0' }}
+    />
   );
-}
 
-const TASK_PHASE_TEXT: Record<BuildTaskPhase, { text: string; color: string }> = {
-  building: { text: '构建中', color: 'processing' },
-  waiting: { text: '等待重试', color: 'warning' },
-  done: { text: '已完成', color: 'success' },
-  failed: { text: '失败', color: 'error' },
-  cancelled: { text: '已取消', color: 'default' },
-};
-
-function BuildTaskItem({
-  task,
-  onCancel,
-  onRemove,
-}: {
-  task: import('../hooks/useBuildTasks').BuildTask;
-  onCancel: () => void;
-  onRemove: () => void;
-}) {
-  const phase = TASK_PHASE_TEXT[task.phase];
-  const active = task.phase === 'building' || task.phase === 'waiting';
   return (
-    <Card size="small" style={{ width: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>{task.reqName}</div>
-          <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#555' }}>
-            {task.app} · {task.env}
-          </div>
-          <div style={{ marginTop: 6 }}>
-            <Tag color={phase.color}>{phase.text}</Tag>
-            {task.phase === 'waiting' && (
-              <span style={{ fontSize: 12, color: '#888' }}>
-                第 {task.retry} 次重试，{task.nextInSec}s 后
-              </span>
-            )}
-            {task.detail && task.phase !== 'building' && (
-              <div style={{ fontSize: 12, color: '#999', marginTop: 4, wordBreak: 'break-all' }}>
-                {task.detail}
-              </div>
-            )}
-            {task.recordUrl && (
-              <div style={{ marginTop: 4 }}>
-                <a
-                  href={task.recordUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ fontSize: 12 }}
-                  data-testid="build-task-record-link"
-                >
-                  查看构建记录
-                </a>
-              </div>
-            )}
-          </div>
-        </div>
-        <div style={{ flexShrink: 0 }}>
-          {active ? (
-            <Button
-              danger
-              size="small"
-              onClick={onCancel}
-              data-testid="build-task-cancel-button"
+    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      {/* 左：主内容卡片（随内容区整体滚动） */}
+      <Card style={{ flex: 1, minWidth: 0 }}>
+        {/* 标题行：登记/导入导出/构建任务 */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            marginBottom: 16,
+            flexWrap: 'wrap',
+            gap: 8,
+          }}
+        >
+          <Space>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateForm}>
+              登记需求
+            </Button>
+            <Upload
+              accept=".json,application/json"
+              showUploadList={false}
+              beforeUpload={(file) => {
+                void handleImportFile(file);
+                return false;
+              }}
             >
-              取消
-            </Button>
-          ) : (
-            <Button size="small" onClick={onRemove} data-testid="build-task-remove-button">
-              移除
-            </Button>
-          )}
+              <Button icon={<ImportOutlined />}>导入数据</Button>
+            </Upload>
+            <Button onClick={handleExportAll}>导出数据</Button>
+            <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
+            <Badge count={activeCount} size="small" offset={[-2, 2]}>
+              <Button
+                icon={<ToolOutlined />}
+                onClick={() => setBuildPanelOpen((v) => !v)}
+                data-testid="build-tasks-open-button"
+              >
+                构建任务
+              </Button>
+            </Badge>
+          </Space>
         </div>
-      </div>
-    </Card>
+
+        {/* 工具行：双轨环境统计（点击筛选）+ 显示已发布/统计项目 */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 16,
+            marginBottom: 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <StatsBar
+            requirements={requirements}
+            activeEnv={filter.currentEnv ?? null}
+            onToggleEnv={(env) =>
+              setFilter((f) => ({ ...f, currentEnv: f.currentEnv === env ? null : env }))
+            }
+          />
+          <Space size="middle">
+            <Space size="small">
+              <span style={{ fontSize: 12, color: '#666' }}>显示已发布</span>
+              <Switch
+                size="small"
+                checked={showPublished}
+                onChange={setShowPublished}
+                data-testid="show-published-switch"
+              />
+            </Space>
+            <Button
+              type="text"
+              icon={<BarChartOutlined />}
+              onClick={() => setStatsOpen(true)}
+              style={{ flexShrink: 0 }}
+            >
+              统计项目
+            </Button>
+          </Space>
+        </div>
+
+        <FilterBar
+          value={filter}
+          onChange={setFilter}
+          envOptions={ALL_ENVS}
+          dateOptions={dateOptions}
+          apps={devopsApps.apps}
+        />
+
+        {/* 列表区：随内容区整体滚动（批量面板吸顶由其自身 sticky 实现） */}
+        <div style={{ paddingRight: 4 }}>
+          {/* 批量操作区：选中需求 > 0 时显示 */}
+          <BatchPanel
+            reqs={selectedReqs}
+            apps={devopsApps.apps}
+            buildPlan={buildPlan}
+            excluded={batchExcluded}
+            included={batchIncluded}
+            onRemoveItem={handleRemoveItem}
+            onIncludeItem={handleIncludeItem}
+            onClearSelection={handleClearSelection}
+            onBatchMr={handleBatchMr}
+            onBatchBuild={handleBatchBuild}
+            batchBuilding={batchBuilding}
+          />
+
+          {groups.length === 0
+            ? emptyView
+            : groups.map((g) => (
+                <div
+                  key={g.date ?? '__none__'}
+                  style={{
+                    background: '#fafafa',
+                    border: '1px solid #f0f0f0',
+                    borderRadius: 10,
+                    padding: 12,
+                    marginBottom: 16,
+                  }}
+                  data-testid={`release-group-${g.date ?? 'none'}`}
+                >
+                  {/* 框头：发版日期 + 计数（未填组弱化） */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <Typography.Text strong style={{ fontSize: 13 }}>
+                      {g.date ?? '未填发版日期'}
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {g.reqs.length} 条
+                    </Typography.Text>
+                    {g.date == null && (
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        （建议补填，便于归档整理）
+                      </Typography.Text>
+                    )}
+                  </div>
+                  <RequirementCardGrid
+                    data={g.reqs}
+                    apps={devopsApps.apps}
+                    selectedReqIds={selectedReqIds}
+                    tasks={tasks}
+                    onToggleSelect={handleToggleSelect}
+                    onEdit={openEditForm}
+                    onDelete={handleDelete}
+                    onChangeReleaseDate={(id, releaseDate) => update(id, { releaseDate })}
+                    onAdvanceTrack={handleAdvanceTrack}
+                    onToggleTestPass={handleToggleTestPass}
+                    onSetTarget={handleSetTarget}
+                    onTrackBuild={(req, track) => void handleTrackBuild(req, track)}
+                    onTrackMr={handleTrackMr}
+                    onRemoveTrack={handleRemoveTrack}
+                    onOpenBuildPanel={() => setBuildPanelOpen(true)}
+                  />
+                </div>
+              ))}
+        </div>
+
+        <RequirementForm
+          open={formOpen}
+          editing={editing}
+          apps={devopsApps.apps}
+          onCancel={closeForm}
+          onSubmit={handleSubmit}
+        />
+
+        <ProjectStatsModal
+          open={statsOpen}
+          requirements={filtered}
+          onClose={() => setStatsOpen(false)}
+        />
+      </Card>
+
+      {/* 右：常驻构建面板（与视口等高的固定列，内部各自滚动） */}
+      <BuildPanel open={buildPanelOpen} onToggle={() => setBuildPanelOpen((v) => !v)} />
+    </div>
   );
 }

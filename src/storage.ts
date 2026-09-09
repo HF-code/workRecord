@@ -99,7 +99,30 @@ export function saveAutoBuildOnFail(on: boolean): void {
   }
 }
 
-/** 一次性迁移：将旧版本独立存储的构建目标分支 / 勾选项并回 requirements（同表），并清理旧 key */
+/** 一次性迁移：本地已存的项目数据中 vzanlive_weapp 未标记「不参与构建」时补上（幂等）。
+ *  未存过（走默认数据）无需处理——默认数据已含标记。 */
+export function migrateDevopsAppsExcludeFlag(): void {
+  try {
+    const raw = localStorage.getItem(DEVOPS_APPS_KEY);
+    if (!raw) return;
+    const list = JSON.parse(raw) as Array<{ app?: unknown; excludeFromBuild?: unknown }>;
+    if (!Array.isArray(list)) return;
+    let changed = false;
+    const next = list.map((a) => {
+      if (a && typeof a === 'object' && a.app === 'vzanlive_weapp' && a.excludeFromBuild === undefined) {
+        changed = true;
+        return { ...a, excludeFromBuild: true };
+      }
+      return a;
+    });
+    if (changed) localStorage.setItem(DEVOPS_APPS_KEY, JSON.stringify(next));
+  } catch {
+    // 迁移失败不影响主流程
+  }
+}
+
+/** 一次性迁移：将旧版本独立存储的构建目标分支 / 勾选项并回 requirements（同表），并清理旧 key。
+ *  双轨模型下旧 buildEnv 按环境所属集群落到对应轨的目标环境字段。 */
 export function migrateLegacyBuildPlan(): void {
   const LEGACY_ENVS_KEY = 'work-tracker:build-envs:v1';
   const LEGACY_SELECTED_KEY = 'work-tracker:build-selected:v1';
@@ -110,12 +133,22 @@ export function migrateLegacyBuildPlan(): void {
     const envs = rawEnvs ? (JSON.parse(rawEnvs) as Record<string, string>) : {};
     const selected = rawSelected ? (JSON.parse(rawSelected) as Record<string, string[]>) : {};
     const list = loadRequirements();
-    const next = list.map((r) => ({
-      ...r,
-      buildEnv: (envs[r.id] as BuildEnv | undefined) ?? r.buildEnv,
-      buildItems: selected[r.id] ?? r.buildItems,
-    }));
-    saveRequirements(next);
+    const next = list.map((r) => {
+      const patch: Record<string, unknown> = {
+        buildItems: (selected[r.id] as string[] | undefined) ?? r.buildItems,
+      };
+      const legacyEnv = envs[r.id] as BuildEnv | undefined;
+      if (legacyEnv) {
+        // 旧目标分支按环境所属集群落到对应轨的显式目标（微赞 test/pre → targetWeizan，星享环境 → targetStar）
+        if (legacyEnv === 'dev' || legacyEnv === 'test' || legacyEnv === 'pre' || legacyEnv === 'master') {
+          patch.targetWeizan = legacyEnv;
+        } else {
+          patch.targetStar = legacyEnv;
+        }
+      }
+      return { ...r, ...patch };
+    });
+    saveRequirements(next as typeof list);
     localStorage.removeItem(LEGACY_ENVS_KEY);
     localStorage.removeItem(LEGACY_SELECTED_KEY);
   } catch {

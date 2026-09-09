@@ -1,20 +1,24 @@
 import { Layout, Menu } from 'antd';
 import { BarChartOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useBuildNotifications } from '../hooks/useBuildNotifications';
 
 const { Header, Content } = Layout;
 
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  // 全局构建完成通知（antd 弹窗 + 系统通知 + 标签页标题），跨路由生效
+  useBuildNotifications();
   const isSettings = location.pathname.startsWith('/settings');
   const isQuickBuild = location.pathname.startsWith('/quick-build');
   const selectedKey = isSettings ? '/settings' : isQuickBuild ? '/quick-build' : '/';
-  // 需求记录页（瀑布流卡片）放开全屏宽度；系统配置 / 快速构建页保留限宽，表单/表格全屏拉伸可读性差
+  // 需求记录页放开全屏宽度；系统配置 / 快速构建页保留限宽，表单/表格全屏拉伸可读性差
   const maxWidth = isSettings || isQuickBuild ? 1200 : undefined;
 
   return (
-    <Layout style={{ minHeight: '100vh', background: '#f5f5f5' }}>
+    // Content 为唯一滚动容器：内容区整体滚动（需求记录页右栏/批量面板用 sticky 保持可见）
+    <Layout style={{ height: '100vh', background: '#f5f5f5', overflow: 'hidden' }}>
       <Header
         style={{
           background: '#fff',
@@ -25,6 +29,7 @@ export default function AppLayout() {
           height: 56,
           lineHeight: 'normal',
           padding: 0,
+          flexShrink: 0,
         }}
       >
         <div
@@ -71,7 +76,7 @@ export default function AppLayout() {
           />
         </div>
       </Header>
-      <Content style={{ padding: '24px 16px' }}>
+      <Content style={{ padding: 16, flex: 1, minHeight: 0, overflow: 'auto' }}>
         <div style={{ maxWidth, margin: '0 auto' }}>
           <Outlet />
         </div>

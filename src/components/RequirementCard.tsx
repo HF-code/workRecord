@@ -1,181 +1,93 @@
 /**
- * 需求卡片：单需求的配置与操作单元。
- * 结构：头部（勾选 + 拖拽把手 + 需求名外链 + 版本 Tag + ⋯菜单）
- *      → 中部（状态 / 发版时间 / 备注）
- *      → 项目区（会话态子勾选 + 分支 + 单项 MR 图标，超 4 个折叠）
- *      → 底部（env 选择 + 构建 + 提交MR）。
- * 卡片背景按状态阶段分色（开发中/进行中/发布后），选中态黑描边。
- * 子勾选仅决定单卡 构建/MR 的作用范围，纯会话态：默认全不勾、不持久化、刷新即失。
+ * 需求卡片：单需求的配置与操作单元（列表视图，按发版日分组展示）。
+ * 结构：头部（勾选 + 需求名外链 + 版本 Tag + 构建小灯 + ⋯菜单）
+ *      → 双轨区（微赞/星享各一块：阶段推进 + 测试通过 + 目标环境 + 构建/提交MR；
+ *        每块可 X 移除该轨，移除后可点「+ xx轨」恢复为未开始）
+ *      → 发版时间 / 备注
+ *      → 项目区（项目 + 分支 + 「不构建」灰显标识，超 4 个折叠）。
+ * 卡片背景按整体派生状态分色（开发中/进行中/已发布），选中态黑描边。
+ * 构建/MR 按轨操作，作用于该需求全部有效项目（排除「不参与构建」）。
+ * 构建小灯：按全局构建任务（reqIds 命中本需求）显示 进行中/失败/成功 圆点，点击展开右侧面板。
  */
 import { useState } from 'react';
 import { App as AntdApp, Button, Checkbox, DatePicker, Dropdown, Select, Tag, Tooltip } from 'antd';
-import {
-  DownOutlined,
-  ExportOutlined,
-  HolderOutlined,
-  MergeOutlined,
-  MoreOutlined,
-} from '@ant-design/icons';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { CloseOutlined, ExportOutlined, MoreOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { MenuProps } from 'antd';
-import { STATUSES, STATUS_COLORS, type Requirement, type Status } from '../types';
+import type { Requirement, Track } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
-import type { BranchConfig } from '../config/branches';
-import { buildMergeRequestUrl, getCsrfToken, type BuildEnv } from '../build';
-import { startBuildTask } from '../hooks/useBuildTasks';
-import { getCardTone, type BuildPlan } from '../batch';
+import { buildLightLevel, getBuildLight } from '../utils/buildLight';
+import {
+  CLUSTER_COLOR,
+  TRACK_ENVS,
+  TRACK_LABELS,
+  isTrackOnline,
+  overallStatus,
+  trackEnvOf,
+  trackStatus,
+  trackTargetOf,
+} from '../config/track';
+import { getCardTone, isBuildExcluded } from '../batch';
 
 interface Props {
   req: Requirement;
   apps: DevopsApp[];
-  branches: BranchConfig[];
-  buildPlan: BuildPlan;
   /** 批量勾选态（卡片黑色描边） */
   selected: boolean;
+  /** 全局构建任务（构建小灯数据源） */
+  tasks: import('../hooks/useBuildTasks').BuildTask[];
   onToggleSelect: (reqId: string, checked: boolean) => void;
   onEdit: (req: Requirement) => void;
   onDelete: (id: string) => void;
-  onChangeStatus: (id: string, status: Status) => void;
   onChangeReleaseDate: (id: string, date: string | null) => void;
+  /** 推进某轨阶段（null = 重置为未开始） */
+  onAdvanceTrack: (reqId: string, track: Track, env: import('../build').BuildEnv | null) => void;
+  /** 切换某轨「测试通过」手动标记 */
+  onToggleTestPass: (reqId: string, track: Track, pass: boolean) => void;
+  /** 显式设置某轨构建/MR 目标环境 */
+  onSetTarget: (reqId: string, track: Track, env: import('../build').BuildEnv) => void;
+  /** 某轨构建（作用于该需求全部有效项目） */
+  onTrackBuild: (req: Requirement, track: Track) => void;
+  /** 某轨提交 MR（作用于该需求全部有效项目） */
+  onTrackMr: (req: Requirement, track: Track) => void;
+  /** 移除某轨（该需求不走此轨发布，卡片上可再添加回来） */
+  onRemoveTrack: (reqId: string, track: Track) => void;
+  /** 点击构建小灯：展开右侧构建面板 */
+  onOpenBuildPanel: () => void;
 }
 
 /** 项目超过该数量时折叠，避免卡片高度失控 */
 const COLLAPSE_LIMIT = 4;
 
-/** 生成单个项目的 MR 链接（缺 gitUrl/分支返回原因） */
-function buildItemMrUrl(
-  project: string,
-  branch: string,
-  env: BuildEnv,
-  apps: DevopsApp[],
-): { url: string } | { reason: string } {
-  const gitUrl = apps.find((a) => a.app === project)?.gitUrl;
-  if (!gitUrl) return { reason: '未配置 Git 仓库地址' };
-  if (!branch) return { reason: '未填写开发分支' };
-  return { url: buildMergeRequestUrl(gitUrl, branch, env) };
-}
+/** 双轨顺序：微赞在前，星享在后 */
+const TRACKS: Track[] = ['weizan', 'star'];
 
 export default function RequirementCard({
   req,
   apps,
-  branches,
-  buildPlan,
   selected,
+  tasks,
   onToggleSelect,
   onEdit,
   onDelete,
-  onChangeStatus,
   onChangeReleaseDate,
+  onAdvanceTrack,
+  onToggleTestPass,
+  onSetTarget,
+  onTrackBuild,
+  onTrackMr,
+  onRemoveTrack,
+  onOpenBuildPanel,
 }: Props) {
-  const { message, modal } = AntdApp.useApp();
-  const [building, setBuilding] = useState(false);
+  const { modal } = AntdApp.useApp();
   const [expanded, setExpanded] = useState(false);
-  // 会话态子勾选：默认空集（全不勾），仅决定本卡 构建/MR 的作用范围，不写 localStorage
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  // 某轨构建请求进行中（防双击），值为轨名或 null
+  const [pendingTrack, setPendingTrack] = useState<Track | null>(null);
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: req.id,
-  });
-
-  const env = buildPlan.getEnv(req);
+  const light = getBuildLight(tasks, req.id);
+  const lightLevel = buildLightLevel(light);
   const visibleItems = expanded ? req.items : req.items.slice(0, COLLAPSE_LIMIT);
-
-  /** 子勾选切换（会话态） */
-  const toggleItem = (itemId: string, checked: boolean) => {
-    setCheckedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(itemId);
-      else next.delete(itemId);
-      return next;
-    });
-  };
-
-  /** 单项 MR：打开某项目的 GitLab 预填链接 */
-  const openItemMr = (project: string, branch: string) => {
-    const result = buildItemMrUrl(project, branch, env, apps);
-    if ('reason' in result) {
-      message.warning(`【${project}】${result.reason}，无法生成 MR 链接`);
-      return;
-    }
-    window.open(result.url, '_blank', 'noreferrer');
-  };
-
-  /** 单卡 MR：打开该卡勾选项目的 MR 链接（同步循环 + 提示拦截兜底） */
-  const handleCardMr = () => {
-    const targets = req.items.filter((it) => checkedIds.has(it.id));
-    if (targets.length === 0) {
-      message.warning('请先勾选要提交 MR 的项目');
-      return;
-    }
-    const skipped: string[] = [];
-    let opened = 0;
-    for (const it of targets) {
-      const result = buildItemMrUrl(it.project, it.branch, env, apps);
-      if ('reason' in result) {
-        skipped.push(`【${it.project}】${result.reason}`);
-        continue;
-      }
-      window.open(result.url, '_blank', 'noreferrer');
-      opened += 1;
-    }
-    if (opened > 0) {
-      message.success(`已打开 ${opened} 个 MR 页面，如被浏览器拦截请用项目行内 MR 图标逐个打开`);
-    }
-    if (skipped.length > 0) {
-      message.warning(`已跳过：${skipped.join('；')}`);
-    }
-  };
-
-  /** 单卡构建：作用于会话态子勾选的项目 */
-  const handleBuild = async () => {
-    if (!getCsrfToken()) {
-      message.warning('未登录运维平台，请先登录后再构建');
-      return;
-    }
-    const targets = req.items.filter((it) => checkedIds.has(it.id));
-    if (targets.length === 0) {
-      message.warning('请先勾选要构建的项目');
-      return;
-    }
-    setBuilding(true);
-    try {
-      // 每个 target 作为独立任务交给全局构建任务 store（含自动轮询重试）
-      const results = await Promise.all(
-        targets.map((it) => startBuildTask(req.name, it.project, env, buildPlan.getBuildOther(req))),
-      );
-      let okCount = 0;
-      const fails: string[] = [];
-      let authFailed = false;
-      results.forEach((r, i) => {
-        const app = targets[i].project;
-        if (r.ok) {
-          okCount += 1;
-        } else if (r.status === 401 || r.status === 403) {
-          authFailed = true;
-        } else if (r.detail === '已取消') {
-          // 用户主动取消，不额外提示
-        } else {
-          fails.push(`【${app}】${r.detail}`);
-        }
-      });
-      if (authFailed) {
-        message.error('登录态已失效，请重新登录运维平台');
-        return;
-      }
-      if (fails.length > 0) {
-        message.error(`构建失败：${fails.join('；')}`);
-        if (okCount > 0) message.success(`成功触发 ${okCount} 个项目构建`);
-        return;
-      }
-      if (okCount > 0) {
-        message.success(`【${req.name}】已触发 ${okCount} 个项目构建`);
-      }
-    } finally {
-      setBuilding(false);
-    }
-  };
+  const tone = getCardTone(overallStatus(req));
 
   /** ⋯ 菜单：编辑 / 删除（删除走确认弹窗） */
   const actionMenu: MenuProps['items'] = [
@@ -197,13 +109,17 @@ export default function RequirementCard({
     },
   ];
 
-  const allChecked = req.items.length > 0 && req.items.every((it) => checkedIds.has(it.id));
-  const indeterminate = req.items.some((it) => checkedIds.has(it.id)) && !allChecked;
-  const tone = getCardTone(req.status);
+  /** 单轨操作触发（构建/MR 共用防双击锁） */
+  const runTrackAction = (track: Track, fn: () => void) => {
+    if (pendingTrack) return;
+    setPendingTrack(track);
+    // 页面层处理器同步发起任务（消息提示即时返回），此处下一帧解锁
+    setTimeout(() => setPendingTrack(null), 600);
+    fn();
+  };
 
   return (
     <div
-      ref={setNodeRef}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -214,26 +130,15 @@ export default function RequirementCard({
         borderRadius: 8,
         border: selected ? '1.5px solid #1F1F1F' : `1px solid ${tone.border}`,
         boxShadow: selected ? '0 2px 8px rgba(0,0,0,0.10)' : 'none',
-        transform: CSS.Translate.toString(transform),
-        transition: transition ?? 'transform 200ms ease',
-        ...(isDragging ? { position: 'relative', zIndex: 999, opacity: 0.85 } : {}),
       }}
     >
-      {/* 头部：勾选 + 把手 + 名称 + 版本 + ⋯ */}
+      {/* 头部：勾选 + 名称 + 版本 + 小灯 + ⋯ */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <Checkbox
           checked={selected}
           onChange={(e) => onToggleSelect(req.id, e.target.checked)}
-          onClick={(e) => e.stopPropagation()}
+          data-testid={`card-select-checkbox-${req.id}`}
         />
-        <span
-          {...attributes}
-          {...listeners}
-          aria-label="拖拽排序"
-          style={{ cursor: 'grab', color: '#999', touchAction: 'none', display: 'inline-flex' }}
-        >
-          <HolderOutlined />
-        </span>
         <a
           href={req.tapdUrl}
           target="_blank"
@@ -242,46 +147,172 @@ export default function RequirementCard({
         >
           {req.name} <ExportOutlined style={{ fontSize: 12 }} />
         </a>
-        <Tag
-          style={{ marginInlineEnd: 0, fontSize: 12, lineHeight: '18px', flexShrink: 0 }}
-        >
+        <Tag style={{ marginInlineEnd: 0, fontSize: 12, lineHeight: '18px', flexShrink: 0 }}>
           {req.version ?? '大版'}
         </Tag>
+        {lightLevel && (
+          <Tooltip title={lightLevel.title}>
+            <span
+              onClick={onOpenBuildPanel}
+              style={{
+                flexShrink: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                cursor: 'pointer',
+                fontSize: 11,
+                color: lightLevel.color,
+              }}
+              data-testid={`card-build-light-${req.id}`}
+            >
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: lightLevel.color }} />
+              {lightLevel.count}
+            </span>
+          </Tooltip>
+        )}
         <Dropdown menu={{ items: actionMenu }} trigger={['click']}>
           <Button type="text" size="small" icon={<MoreOutlined />} style={{ flexShrink: 0 }} />
         </Dropdown>
       </div>
 
-      {/* 中部：状态 + 发版时间 + 备注 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Select
-          value={req.status}
-          size="small"
-          style={{ width: 130 }}
-          onChange={(v) => onChangeStatus(req.id, v)}
-          options={STATUSES.map((s: Status) => ({ label: s, value: s }))}
-          labelRender={() => (
-            <span
-              style={{
-                display: 'inline-block',
-                padding: '0 7px',
-                borderRadius: 4,
-                fontSize: 12,
-                lineHeight: '20px',
-              }}
-              className={`ant-tag ant-tag-${STATUS_COLORS[req.status]}`}
+      {/* 双轨区：每轨一块（状态行 + 操作行）；undefined = 该轨已移除不显示 */}
+      {TRACKS.filter((t) => (t === 'weizan' ? req.envWeizan : req.envStar) !== undefined).map((track) => {
+        const env = trackEnvOf(req, track);
+        const testPass = track === 'weizan' ? req.testPassWeizan : req.testPassStar;
+        const statusView = trackStatus(track, env, testPass);
+        const target = trackTargetOf(req, track);
+        const online = isTrackOnline(req, track);
+        const cluster = track === 'weizan' ? '微赞' : '星享';
+        return (
+          <div
+            key={track}
+            style={{
+              background: '#fafafa',
+              border: '1px solid #f0f0f0',
+              borderRadius: 6,
+              padding: '6px 8px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+            data-testid={`card-track-${track}-${req.id}`}
+          >
+            {/* 状态行：轨色点 + 轨名 + 派生状态 + 测试通过 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: CLUSTER_COLOR[cluster as '微赞' | '星享'],
+                  flexShrink: 0,
+                }}
+                title={cluster}
+              />
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#333' }}>{TRACK_LABELS[track]}</span>
+              {statusView ? (
+                <Tag color={statusView.color} style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '16px' }}>
+                  {statusView.label}
+                </Tag>
+              ) : (
+                <span style={{ fontSize: 11, color: '#bbb' }}>未开始</span>
+              )}
+              <Tooltip title={online ? '已上线，无需标记' : '测试同学确认当前阶段测试通过'}>
+                <Checkbox
+                  checked={!!testPass}
+                  disabled={env == null || online}
+                  onChange={(e) => onToggleTestPass(req.id, track, e.target.checked)}
+                  style={{ marginLeft: 'auto', fontSize: 12, color: '#666' }}
+                  data-testid={`card-track-testpass-${track}-${req.id}`}
+                >
+                  测试通过
+                </Checkbox>
+              </Tooltip>
+              <Tooltip title="移除该轨（该需求不走此轨发布，可在下方重新添加）">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CloseOutlined style={{ fontSize: 10, color: '#999' }} />}
+                  onClick={() => onRemoveTrack(req.id, track)}
+                  style={{ flexShrink: 0, width: 20, height: 20, minWidth: 20, padding: 0 }}
+                  data-testid={`card-track-remove-${track}-${req.id}`}
+                />
+              </Tooltip>
+            </div>
+            {/* 操作行：阶段推进 + 目标环境 + 构建 + 提交MR */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <Tooltip title="推进该轨到某环境">
+                <Select
+                  size="small"
+                  style={{ width: 112 }}
+                  value={env ?? undefined}
+                  placeholder="未开始"
+                  allowClear
+                  onChange={(v) => onAdvanceTrack(req.id, track, (v as typeof target) ?? null)}
+                  options={TRACK_ENVS[track].map((e) => ({ label: e, value: e }))}
+                  data-testid={`card-track-env-select-${track}-${req.id}`}
+                />
+              </Tooltip>
+              <Tooltip title="该轨构建 / MR 的目标环境（默认取下一环境，可改）">
+                <Select
+                  size="small"
+                  style={{ width: 112 }}
+                  value={target}
+                  onChange={(v) => onSetTarget(req.id, track, v as typeof target)}
+                  options={TRACK_ENVS[track].map((e) => ({ label: e, value: e }))}
+                  data-testid={`card-track-target-select-${track}-${req.id}`}
+                />
+              </Tooltip>
+              <Button
+                size="small"
+                type="primary"
+                loading={pendingTrack === track}
+                disabled={pendingTrack !== null && pendingTrack !== track}
+                onClick={() => runTrackAction(track, () => onTrackBuild(req, track))}
+                data-testid={`card-track-build-${track}-${req.id}`}
+              >
+                构建
+              </Button>
+              <Button
+                size="small"
+                disabled={pendingTrack !== null}
+                onClick={() => runTrackAction(track, () => onTrackMr(req, track))}
+                data-testid={`card-track-mr-${track}-${req.id}`}
+              >
+                提交MR
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* 已移除的轨：可重新添加（恢复为未开始态） */}
+      {TRACKS.filter((t) => (t === 'weizan' ? req.envWeizan : req.envStar) === undefined).length > 0 && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          {TRACKS.filter((t) => (t === 'weizan' ? req.envWeizan : req.envStar) === undefined).map((track) => (
+            <Button
+              key={track}
+              size="small"
+              type="dashed"
+              onClick={() => onAdvanceTrack(req.id, track, null)}
+              style={{ fontSize: 12 }}
+              data-testid={`card-track-add-${track}-${req.id}`}
             >
-              {req.status}
-            </span>
-          )}
-        />
+              + {TRACK_LABELS[track]}轨
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {/* 发版时间 + 备注 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <DatePicker
           size="small"
           allowClear
           value={req.releaseDate ? dayjs(req.releaseDate) : null}
           onChange={(d) => onChangeReleaseDate(req.id, d ? d.format('YYYY-MM-DD') : null)}
-          placeholder="发版时间"
-          style={{ width: 120 }}
+          placeholder="发版日期"
+          style={{ width: 132 }}
         />
       </div>
       {req.remark ? (
@@ -290,51 +321,47 @@ export default function RequirementCard({
         </div>
       ) : null}
 
-      {/* 项目区：会话态子勾选 + 项目名 + 分支 + 单项 MR；超限折叠 */}
+      {/* 项目区：项目名 + 分支；超限折叠；「不构建」项目灰显 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <Checkbox
-          checked={allChecked}
-          indeterminate={indeterminate}
-          onChange={(e) =>
-            setCheckedIds(e.target.checked ? new Set(req.items.map((it) => it.id)) : new Set())
-          }
-          style={{ fontSize: 12, color: '#666' }}
-        >
-          全选项目
-        </Checkbox>
-        {visibleItems.map((it) => (
-          <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Checkbox
-              checked={checkedIds.has(it.id)}
-              onChange={(e) => toggleItem(it.id, e.target.checked)}
-            />
-            <span style={{ fontSize: 12, flexShrink: 0 }}>{it.project}</span>
-            <span
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 12,
-                color: '#888',
-                fontFamily: 'monospace',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-              title={it.branch}
-            >
-              {it.branch}
-            </span>
-            <Tooltip title={`打开 ${it.project} 的 MR`}>
-              <Button
-                type="text"
-                size="small"
-                icon={<MergeOutlined />}
-                onClick={() => openItemMr(it.project, it.branch)}
-                style={{ flexShrink: 0 }}
-              />
-            </Tooltip>
-          </div>
-        ))}
+        {visibleItems.map((it) => {
+          const excluded = isBuildExcluded(apps, it.project);
+          return (
+            <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  flexShrink: 0,
+                  color: excluded ? '#bbb' : undefined,
+                  textDecoration: excluded ? 'line-through' : undefined,
+                }}
+              >
+                {it.project}
+              </span>
+              {excluded && (
+                <Tooltip title="项目配置中标记为不参与构建；按轨构建会自动跳过">
+                  <Tag style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '16px' }} color="default">
+                    不构建
+                  </Tag>
+                </Tooltip>
+              )}
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 12,
+                  color: '#888',
+                  fontFamily: 'monospace',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={it.branch}
+              >
+                {it.branch}
+              </span>
+            </div>
+          );
+        })}
         {req.items.length > COLLAPSE_LIMIT && (
           <Button
             type="link"
@@ -342,32 +369,9 @@ export default function RequirementCard({
             style={{ alignSelf: 'flex-start', padding: 0, height: 'auto', fontSize: 12 }}
             onClick={() => setExpanded((v) => !v)}
           >
-            {expanded ? '收起' : `展开全部（${req.items.length}）`} <DownOutlined style={{ fontSize: 10 }} />
+            {expanded ? '收起' : `展开全部（${req.items.length}）`}
           </Button>
         )}
-      </div>
-
-      {/* 底部：env + 构建 + 提交MR（纯文字按钮，无前置图标） */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto' }}>
-        <Select
-          size="small"
-          value={env}
-          onChange={(v) => buildPlan.setEnv(req, v)}
-          options={branches.map((b) => ({ label: b.label, value: b.value }))}
-          style={{ flex: 1, minWidth: 80 }}
-        />
-        <Button
-          size="small"
-          type="primary"
-          loading={building}
-          disabled={checkedIds.size === 0}
-          onClick={() => void handleBuild()}
-        >
-          构建
-        </Button>
-        <Button size="small" disabled={checkedIds.size === 0} onClick={handleCardMr}>
-          提交MR
-        </Button>
       </div>
     </div>
   );

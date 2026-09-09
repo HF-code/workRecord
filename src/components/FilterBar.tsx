@@ -1,75 +1,64 @@
-import { DatePicker, Input, Select, Space } from 'antd';
-
-const { RangePicker } = DatePicker;
-import dayjs from 'dayjs';
-import type { Status } from '../types';
+import { Input, Select, Space } from 'antd';
 import type { DevopsApp } from '../config/devopsApps';
 import { projectLabel } from './ProjectSelect';
 
 export interface FilterValue {
-  statuses: Status[];
   project?: string;
-  releaseDateRange: [string, string] | null; // ['YYYY-MM-DD', 'YYYY-MM-DD']
+  /** 发版日期（单选，值为 'YYYY-MM-DD'）；null = 不筛 */
+  releaseDate?: string | null;
   keyword: string;
+  /** 已达环境（任一轨当前阶段命中）；null = 不筛 */
+  currentEnv?: string | null;
 }
 
 interface Props {
   value: FilterValue;
   onChange: (value: FilterValue) => void;
-  statusOptions: Status[];
+  /** 全部环境（已达环境筛选项，按轨序） */
+  envOptions: string[];
+  /** 全部需求已填的发版日期去重列表（降序，供单选） */
+  dateOptions: string[];
   apps: DevopsApp[];
 }
 
-export default function FilterBar({ value, onChange, statusOptions, apps }: Props) {
+export default function FilterBar({ value, onChange, envOptions, dateOptions, apps }: Props) {
   const patch = (p: Partial<FilterValue>) => onChange({ ...value, ...p });
 
   return (
     <Space size="middle" wrap style={{ marginBottom: 16 }}>
       <Select
-        mode="multiple"
-        allowClear
-        placeholder="状态筛选"
-        style={{ minWidth: 220 }}
-        value={value.statuses}
-        onChange={(statuses) => patch({ statuses })}
-        options={statusOptions.map((s) => ({ label: s, value: s }))}
-        maxTagCount="responsive"
-      />
-      <Select
         allowClear
         showSearch
         optionFilterProp="label"
         placeholder="项目筛选"
-        style={{ minWidth: 220 }}
+        style={{ minWidth: 200 }}
         value={value.project}
         onChange={(project) => patch({ project })}
         options={apps.map((a) => ({ label: projectLabel(a), value: a.app }))}
+        data-testid="filter-project-select"
       />
-      <RangePicker
+      <Select
         allowClear
-        placeholder={['发版日期起', '发版日期止']}
-        value={
-          value.releaseDateRange
-            ? [dayjs(value.releaseDateRange[0]), dayjs(value.releaseDateRange[1])]
-            : null
-        }
-        onChange={(dates) =>
-          patch({
-            releaseDateRange: dates
-              ? [dates[0]!.format('YYYY-MM-DD'), dates[1]!.format('YYYY-MM-DD')]
-              : null,
-          })
-        }
-        presets={[
-          { label: '今天', value: [dayjs(), dayjs()] },
-          { label: '近一周', value: [dayjs().subtract(6, 'day'), dayjs()] },
-          { label: '近一月', value: [dayjs().subtract(1, 'month'), dayjs()] },
-        ]}
+        placeholder="已达环境（任一轨）"
+        style={{ minWidth: 160 }}
+        value={value.currentEnv ?? undefined}
+        onChange={(env) => patch({ currentEnv: env ?? null })}
+        options={envOptions.map((e) => ({ label: e, value: e }))}
+        data-testid="filter-env-select"
+      />
+      <Select
+        allowClear
+        placeholder="发版日期"
+        style={{ minWidth: 140 }}
+        value={value.releaseDate ?? undefined}
+        onChange={(d) => patch({ releaseDate: d ?? null })}
+        options={dateOptions.map((d) => ({ label: d, value: d }))}
+        data-testid="filter-release-date-select"
       />
       <Input.Search
         allowClear
         placeholder="搜索需求名"
-        style={{ width: 220 }}
+        style={{ width: 200 }}
         value={value.keyword}
         onChange={(e) => patch({ keyword: e.target.value })}
       />

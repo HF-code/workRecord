@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { STATUSES, VERSIONS, type ProjectBranch, type Requirement, type Status } from './types';
+import { VERSIONS, type ProjectBranch, type Requirement } from './types';
 
 export interface ExportPayload {
   version: 1;
@@ -46,10 +46,6 @@ export function exportAll(list: Requirement[]): void {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function isValidStatus(v: unknown): v is Status {
-  return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
-}
-
 function isValidItem(v: unknown): v is ProjectBranch {
   if (typeof v !== 'object' || v === null) return false;
   const it = v as Record<string, unknown>;
@@ -61,12 +57,14 @@ function isValidItem(v: unknown): v is ProjectBranch {
   );
 }
 
+/** 双轨环境字段校验：undefined（未迁移）或 null（未开始）或任意非空字符串（宽松，未知环境构建命令回退环境本身） */
+function isValidTrackEnv(v: unknown): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && v.trim() !== '');
+}
+
 function isValidRequirement(v: unknown): v is Requirement {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
-  // buildEnv 支持自定义标识，仅拦截非字符串与空串（空串会让 getEnv 的 ?? defaultBranch 失效）
-  const validBuildEnv =
-    r.buildEnv === undefined || (typeof r.buildEnv === 'string' && r.buildEnv.trim() !== '');
   const validBuildItems =
     r.buildItems === undefined ||
     (Array.isArray(r.buildItems) && r.buildItems.every((x) => typeof x === 'string'));
@@ -78,11 +76,15 @@ function isValidRequirement(v: unknown): v is Requirement {
     /^https?:\/\//.test(r.tapdUrl) &&
     Array.isArray(r.items) &&
     r.items.every(isValidItem) &&
-    isValidStatus(r.status) &&
     (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate))) &&
     (r.remark === undefined || typeof r.remark === 'string') &&
     (r.version === undefined || (typeof r.version === 'string' && (VERSIONS as readonly string[]).includes(r.version))) &&
-    validBuildEnv &&
+    isValidTrackEnv(r.envWeizan) &&
+    isValidTrackEnv(r.envStar) &&
+    (r.testPassWeizan === undefined || typeof r.testPassWeizan === 'boolean') &&
+    (r.testPassStar === undefined || typeof r.testPassStar === 'boolean') &&
+    isValidTrackEnv(r.targetWeizan) &&
+    isValidTrackEnv(r.targetStar) &&
     validBuildItems
   );
 }

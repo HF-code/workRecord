@@ -1,22 +1,16 @@
 import type { BuildEnv } from './build';
 
-export const STATUSES = [
-  '开发中',
-  '已提测',
-  '测试中',
-  '测试通过',
-  '验收通过',
-  '预发布测试中',
-  '待发布',
-  '线上验证中',
-  '已发布',
-] as const;
-
-export type Status = (typeof STATUSES)[number];
-
+/** 版本标签（纯展示，无行为含义；缺省视为 '大版'） */
 export const VERSIONS = ['大版', '独立'] as const;
 
 export type Version = (typeof VERSIONS)[number];
+
+/**
+ * 部署轨：一个需求可在两条轨上并行推进，互不干扰。
+ * - weizan 微赞轨：dev → test → pre → master（master = 微赞已上线）
+ * - star 星享轨：preb-txnj → pre-txnj → prod-txnj（prod-txnj = 星享已上线）
+ */
+export type Track = 'weizan' | 'star';
 
 export interface ProjectBranch {
   id: string;
@@ -29,29 +23,32 @@ export interface Requirement {
   name: string;
   tapdUrl: string;
   items: ProjectBranch[];
-  status: Status;
   releaseDate: string | null; // 'YYYY-MM-DD'
-  version?: Version; // 旧数据可能无此字段，缺省视为 '大版'
+  /** 版本标签（旧数据可能缺失，缺省视为 '大版'） */
+  version?: Version;
   remark?: string;
-  /** 构建目标分支（整需求共用），缺省视为系统配置默认分支 */
-  buildEnv?: BuildEnv;
-  /** 参与构建的项目 itemId 列表，缺省视为全部项目 */
+  /** 微赞轨当前阶段（null = 未开始/不参与） */
+  envWeizan?: BuildEnv | null;
+  /** 星享轨当前阶段（null = 未开始/不参与） */
+  envStar?: BuildEnv | null;
+  /** 微赞轨「测试通过」手动标记（测试同学确认用；推进阶段时自动重置） */
+  testPassWeizan?: boolean;
+  /** 星享轨「测试通过」手动标记 */
+  testPassStar?: boolean;
+  /** 微赞轨构建/MR 目标环境（缺省 = 当前阶段的下一环境推导） */
+  targetWeizan?: BuildEnv;
+  /** 星享轨构建/MR 目标环境（缺省推导同上） */
+  targetStar?: BuildEnv;
+  /**
+   * 旧数据遗留状态字段（历史 9/10 态枚举），已废弃——
+   * 展示与筛选统一使用 config/track.ts 的派生状态（双轨投影），不再写入。
+   */
+  status?: string;
+  /** 参与构建的项目 itemId 列表（旧数据遗留，批量范围已由会话态 excluded/included 管理） */
   buildItems?: string[];
   createdAt: string;
   updatedAt: string;
 }
 
-export const STATUS_COLORS: Record<Status, string> = {
-  开发中: 'blue',
-  已提测: 'cyan',
-  测试中: 'gold',
-  测试通过: 'green',
-  验收通过: 'green',
-  预发布测试中: 'purple',
-  待发布: 'orange',
-  线上验证中: 'cyan',
-  已发布: 'default',
-};
-
-/** 列表视图排序模式：手动拖拽顺序 / 发版时间降序（新→旧）/ 发版时间升序（旧→新） */
-export type SortMode = 'manual' | 'releaseDesc' | 'releaseAsc';
+/** 整体派生状态（由两条轨进度投影，用于统计/筛选「已发布」） */
+export type OverallStatus = '开发中' | '进行中' | '部分上线' | '已发布';

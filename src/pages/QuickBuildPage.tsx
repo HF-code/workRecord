@@ -7,7 +7,7 @@
  * 状态（batches + env）localStorage 持久化，跨刷新/分时段收集不丢，「清空」重置。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { App as AntdApp, Button, Card, Empty, Input, Popconfirm, Select, Space, Tag, Tooltip, Typography } from 'antd';
+import { App as AntdApp, Button, Card, Empty, Input, Popconfirm, Select, Space, Switch, Tag, Tooltip, Typography } from 'antd';
 import { CopyOutlined, ThunderboltOutlined, WarningOutlined } from '@ant-design/icons';
 import { getDefaultBranch } from '../config/branches';
 import { getCsrfToken, type BuildEnv } from '../build';
@@ -111,13 +111,16 @@ export default function QuickBuildPage() {
   const [env, setEnv] = useState<BuildEnv>(restored?.env || defaultEnv);
   const [input, setInput] = useState('');
   const [building, setBuilding] = useState(false);
+  // 是否包含被项目配置标记「不参与构建」的项目（会话态，默认跳过）
+  const [includeExcluded, setIncludeExcluded] = useState(false);
 
   // 状态变化即持久化（录入/X/排除/清空/切分支）
   useEffect(() => {
     saveState({ batches, env });
   }, [batches, env]);
 
-  /** 汇总清单：全部未排除批次的项目并集（保序去重），构建/复制均基于此 */
+  /** 汇总清单：全部未排除批次的项目并集（保序去重），构建/复制均基于此；
+   *  默认跳过被项目配置标记「不参与构建」的项目（开关可包含） */
   const summary = useMemo(() => {
     const seen = new Set<string>();
     const list: string[] = [];
@@ -130,8 +133,28 @@ export default function QuickBuildPage() {
         }
       }
     }
+    if (!includeExcluded) {
+      return list.filter((p) => !apps.some((a) => a.app === p && a.excludeFromBuild));
+    }
     return list;
-  }, [batches]);
+  }, [batches, apps, includeExcluded]);
+
+  /** 被项目配置标记为不参与构建、当前被跳过的项目（提示行用） */
+  const skippedByConfig = useMemo(() => {
+    if (includeExcluded) return [];
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const b of batches) {
+      if (b.excluded) continue;
+      for (const p of b.projects) {
+        if (!seen.has(p)) {
+          seen.add(p);
+          list.push(p);
+        }
+      }
+    }
+    return list.filter((p) => apps.some((a) => a.app === p && a.excludeFromBuild));
+  }, [batches, apps, includeExcluded]);
 
   /** 录入一批：解析输入 → 新批次小框（忠实记录本波内容，与其他批次重复也保留） */
   const handleAdd = () => {
@@ -327,6 +350,33 @@ export default function QuickBuildPage() {
                 </Button>
               </Popconfirm>
             </div>
+
+            {/* 不参与构建的项目提示 + 临时包含开关 */}
+            {skippedByConfig.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 12,
+                  color: '#888',
+                  padding: '4px 8px',
+                  background: '#fafafa',
+                  borderRadius: 6,
+                }}
+              >
+                <span>
+                  已按项目配置跳过 {skippedByConfig.length} 个不构建项目：{skippedByConfig.join('、')}
+                </span>
+                <Switch
+                  size="small"
+                  checked={includeExcluded}
+                  onChange={setIncludeExcluded}
+                  data-testid="quick-build-include-excluded-switch"
+                />
+                <span>本次包含</span>
+              </div>
+            )}
 
             {/* 构建清单汇总（上）：全部有效批次的去重并集 */}
             <div

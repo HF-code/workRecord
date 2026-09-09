@@ -12,13 +12,13 @@ export default defineConfig({
       // 通过本地后端中转，便于统一注入 CSRF/Origin、透传 cookie，并支持后续扩展。
       // 如需直连远程 devops，可改回 target: 'https://devops.vzan.com' 并恢复下方 headers/cookieDomainRewrite。
       '/devops-api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8093',
         changeOrigin: true,
         secure: true,
       },
       // 钉钉绑定 API（/api/dingtalk/*）本地联调转发到 mywork-server；生产同源托管无需此项
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8093',
         changeOrigin: true,
       },
     },

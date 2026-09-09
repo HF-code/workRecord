@@ -31,6 +31,8 @@ export interface BuildTask {
   detail?: string;
   /** 构建成功后的构建记录页地址 */
   recordUrl?: string;
+  /** 关联的需求 id 列表（卡片构建小灯 / 环境进度自动回写用） */
+  reqIds?: string[];
   /** 制品回查状态（phase 到 done 时启动轮询，随任务清理而清理） */
   artifact?: ArtifactState;
   updatedAt: number;
@@ -168,6 +170,7 @@ function startArtifactPolling(id: string, app: string, env: BuildEnv): void {
 /**
  * 启动单个 app 的构建任务并在「上一任务尚未完成」时按配置间隔自动轮询重试。
  * 任务状态上报到全局 store，可在「构建任务」面板查看 / 取消。
+ * @param reqIds 关联的需求 id 列表（卡片构建小灯 / 环境进度自动回写用，可选）
  * 返回最终构建结果（成功 / 失败 / 取消）。
  */
 export function startBuildTask(
@@ -175,6 +178,7 @@ export function startBuildTask(
   app: string,
   env: BuildEnv,
   buildOther?: string,
+  reqIds?: string[],
 ): Promise<BuildResult> {
   const id = `build-task-${++seq}`;
   let cancelled = false;
@@ -187,6 +191,7 @@ export function startBuildTask(
     phase: 'building',
     retry: 0,
     nextInSec: null,
+    reqIds,
     updatedAt: Date.now(),
   });
   emit();
