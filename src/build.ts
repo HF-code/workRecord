@@ -3,14 +3,15 @@
  * 新版接口为两步式：
  * 1) GET /deploy/build?app=&app_group=&build_other=&get_build_number=1 取最新构建编号（返回纯数字）；
  * 2) POST /deploy/build 携带该 number 提交构建。
- * 请求统一走相对路径 /devops-api：
- * - 本地开发：Vite proxy 转发到 https://devops.vzan.com，浏览器 cookie 自动携带
- * - 远程部署：自带 Node 服务端（server/）转发，入站 Cookie 头透传给上游
+ * 请求统一走 /devops-api 前缀（由 config/api.ts 按 .env 注入的服务端 baseUrl 拼接）：
+ * - 留空（同源）：本地开发由 Vite proxy 转发到本地后端，生产由后端同源托管，浏览器 cookie 自动携带
+ * - 填写（跨域）：直连服务端 origin，由服务端转发运维平台，入站 Cookie 头透传给上游
  * 登录 cookie 由用户自行通过其他工具写入当前站点域名，应用只从 document.cookie 读取。
  */
+import { DEVOPS_API_BASE } from './config/api';
 import { DEVOPS_GROUPS, type DevopsApp, type DevopsGroup } from './config/devopsApps';
 
-const API_BASE = '/devops-api';
+const API_BASE = DEVOPS_API_BASE;
 const BUILD_API = `${API_BASE}/deploy/build`;
 const BRANCH_API = `${API_BASE}/deploy/branch?app=live-h5-2`;
 const APPLICATION_API = `${API_BASE}/deploy/application`;

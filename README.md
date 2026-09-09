@@ -35,6 +35,21 @@ npm run build
 npm run preview
 ```
 
+### 按环境构建与服务端地址注入
+
+构建时通过 `.env.<mode>` 注入服务端 baseUrl（`VITE_SERVER_BASE_URL`），代码统一经 `src/config/api.ts` 读取：
+
+| 指令 | mode | 环境文件 |
+| --- | --- | --- |
+| `npm run build:dev` | development | `.env.development` |
+| `npm run build:test` | test | `.env.test` |
+| `npm run build` | production（默认） | `.env.production` |
+
+- 变量**留空** = 同源请求：本地 dev 由 Vite proxy 转发到本地后端（`vite.config.ts` 的 `server.proxy`），生产由后端同源托管前端产物。
+- 变量**填写服务端 origin**（结尾不带 `/`）= 前后端分离部署时跨域直连该服务端，需服务端放行 CORS 并允许 credentials。
+- 路径前缀约定：`/devops-api/*`（运维平台反代）、`/api/*`（应用自身接口），由代码维护，勿拼入该变量。
+- 个人本地覆盖：新建 `.env.<mode>.local`（已 gitignore），不要改动入库的基础配置。
+
 ## 数据存储说明
 
 | Key | 内容 |

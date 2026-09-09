@@ -9,6 +9,7 @@
  */
 import { useState } from 'react';
 import { App as AntdApp, Alert, Button, Card, Input, Popconfirm, Space, Tag, Typography } from 'antd';
+import { APP_API_BASE } from '../config/api';
 
 /** 绑定状态查询结果 */
 interface AccountStatus {
@@ -33,7 +34,7 @@ export default function DingTalkPage() {
       return;
     }
     try {
-      const res = await fetch(`/api/dingtalk/account/status?email=${encodeURIComponent(e)}`, {
+      const res = await fetch(`${APP_API_BASE}/dingtalk/account/status?email=${encodeURIComponent(e)}`, {
         credentials: 'include',
       });
       const data = (await res.json().catch(() => null)) as AccountStatus | null;
@@ -52,7 +53,7 @@ export default function DingTalkPage() {
     }
     setSaving(true);
     try {
-      const res = await fetch('/api/dingtalk/account', {
+      const res = await fetch(`${APP_API_BASE}/dingtalk/account`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
@@ -79,7 +80,7 @@ export default function DingTalkPage() {
     if (!e) return;
     setUnbinding(true);
     try {
-      const res = await fetch(`/api/dingtalk/account?email=${encodeURIComponent(e)}`, {
+      const res = await fetch(`${APP_API_BASE}/dingtalk/account?email=${encodeURIComponent(e)}`, {
         method: 'DELETE',
         credentials: 'include',
       });
