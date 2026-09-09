@@ -15,8 +15,8 @@ const BUILD_API = `${API_BASE}/deploy/build`;
 const BRANCH_API = `${API_BASE}/deploy/branch?app=live-h5-2`;
 const APPLICATION_API = `${API_BASE}/deploy/application`;
 
-/** 构建/发布记录页的分组，构建 payload 的 group 与记录页 app_group 保持一致 */
-const BUILD_GROUP = 'JenkinsFrontweb';
+/** 构建/发布记录页的分组，构建 payload 的 group 与记录页 app_group 保持一致（制品查询同样携带） */
+export const BUILD_GROUP = 'JenkinsFrontweb';
 /** 运维平台构建记录页基础地址 */
 const DEVOPS_WEB = 'https://devops.vzan.com/index.html';
 
@@ -45,6 +45,8 @@ export function buildMergeRequestUrl(gitUrl: string, branch: string, targetBranc
 export interface BuildParams {
   app: string;
   env: BuildEnv;
+  /** 构建命令（运维平台 build_other 字段）；缺省回退 env */
+  buildOther?: string;
   /** 对应扩展中 update == '1'：同时更新环境 */
   update: boolean;
 }
@@ -79,8 +81,8 @@ function buildHeaders(): Record<string, string> {
   return { 'x-csrftoken': getCsrfToken() };
 }
 
-// live-h5-2 老项目分支解析（与扩展原逻辑一致）
-async function resolveBuildBranch(app: string, env: BuildEnv): Promise<string> {
+// live-h5-2 老项目分支解析（与扩展原逻辑一致）；导出供制品轮询复用（查询参数需与构建时一致）
+export async function resolveBuildBranch(app: string, env: BuildEnv): Promise<string> {
   if (app !== 'live-h5-2') return 'origin/' + env;
   let branch: string = env;
   try {
@@ -111,7 +113,7 @@ async function buildPayload(params: BuildParams) {
     committed_msg: '',
     env: params.update ? params.env : '',
     build_type: 'docker_build',
-    build_other: params.env || 'dev',
+    build_other: params.buildOther || params.env || 'dev',
   };
 }
 
@@ -241,5 +243,68 @@ export async function requestBuild(params: BuildParams): Promise<BuildResult> {
     };
   } catch (e) {
     return { ok: false, status: 0, detail: (e as Error).message, number };
+  }
+}
+
+/** 当前登录用户 email（制品查询入参）；模块级缓存，会话内只查一次 */
+let cachedEmail: string | null = null;
+
+/**
+ * 获取当前登录用户的 email（GET /system/user 透传，浏览器 cookie 自动携带）。
+ * @throws 未登录或接口失败时抛错（调用方自行降级，不阻塞构建结果）
+ */
+export async function fetchCurrentEmail(): Promise<string> {
+  if (cachedEmail) return cachedEmail;
+  const res = await fetch(`${API_BASE}/system/user`, { credentials: 'include' });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('未登录运维平台');
+  }
+  const data = (await res.json().catch(() => null)) as { email?: unknown } | null;
+  if (!res.ok || !data || typeof data.email !== 'string' || !data.email) {
+    throw new Error('获取用户信息失败');
+  }
+  cachedEmail = data.email;
+  return cachedEmail;
+}
+
+/** 制品查询结果：succeed 0失败 / 1成功 / 2进行中 */
+export interface ArtifactInfo {
+  fileUrl: string | null;
+  succeed: 0 | 1 | 2;
+}
+
+/**
+ * 查询最新构建制品：GET /deploy/build 分页接口（app/branch/email/group 四参全带），取 detail[0]。
+ * @returns 请求失败或无记录时返回 null（视为"继续查询"）
+ */
+export async function fetchArtifact(p: {
+  app: string;
+  branch: string;
+  email: string;
+  group: string;
+}): Promise<ArtifactInfo | null> {
+  const qs = new URLSearchParams({
+    page_no: '1',
+    page_size: '10',
+    app: p.app,
+    branch: p.branch,
+    email: p.email,
+    group: p.group,
+  });
+  try {
+    const res = await fetch(`${BUILD_API}?${qs.toString()}`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+    if (!data || !Array.isArray(data.detail) || data.detail.length === 0) return null;
+    const first = data.detail[0] as { file_url?: unknown; succeed?: unknown } | null;
+    if (!first || typeof first !== 'object') return null;
+    const succeedNum = typeof first.succeed === 'number' ? first.succeed : Number(first.succeed);
+    if (succeedNum !== 0 && succeedNum !== 1 && succeedNum !== 2) return null;
+    return {
+      fileUrl: typeof first.file_url === 'string' && first.file_url ? first.file_url : null,
+      succeed: succeedNum,
+    };
+  } catch {
+    return null;
   }
 }

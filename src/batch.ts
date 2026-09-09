@@ -10,9 +10,11 @@ import type { Requirement, ProjectBranch, Status } from './types';
 import type { DevopsApp } from './config/devopsApps';
 import { buildMergeRequestUrl, type BuildEnv } from './build';
 
-/** 批量计算依赖的最小接口（仅 env；卡片子勾选已会话化，不再参与批量范围） */
+/** 构建计划依赖的最小接口（env + 构建命令；卡片子勾选已会话化，不再参与批量范围） */
 export interface BuildPlanLike {
   getEnv: (req: Requirement) => BuildEnv;
+  /** 取构建命令（运维平台 build_other 字段），缺省等于 env */
+  getBuildOther: (req: Requirement) => string;
 }
 
 /** 完整构建计划（useBuildPlan 返回值中 UI 仍需的部分） */
@@ -41,12 +43,14 @@ export interface MrSkipped {
   reason: string;
 }
 
-/** 一条去重后的构建目标（同 project + 同 env 只构建一次） */
+/** 一条去重后的构建目标（同 project + 同 buildOther 只构建一次） */
 export interface BuildTarget {
-  /** `${project}::${env}`，同 key 合并 */
+  /** `${project}::${buildOther}`，同 key 合并 */
   key: string;
   project: string;
   env: BuildEnv;
+  /** 构建命令（运维平台 build_other 字段，缺省等于 env） */
+  buildOther: string;
   /** 参与该构建目标的需求名列表（构建任务名合并展示用） */
   reqNames: string[];
 }
@@ -124,15 +128,16 @@ export function collectBuildTargets(
   let itemCount = 0;
   for (const req of reqs) {
     const env = buildPlan.getEnv(req);
+    const buildOther = buildPlan.getBuildOther(req);
     for (const it of getBatchItems(req, excluded)) {
       itemCount += 1;
-      const key = `${it.project}::${env}`;
+      const key = `${it.project}::${buildOther}`;
       const existing = map.get(key);
       if (existing) {
-        // 同项目同分支去重合并，仅追加需求名（去重防止同名需求重复）
+        // 同项目同构建命令去重合并，仅追加需求名（去重防止同名需求重复）
         if (!existing.reqNames.includes(req.name)) existing.reqNames.push(req.name);
       } else {
-        map.set(key, { key, project: it.project, env, reqNames: [req.name] });
+        map.set(key, { key, project: it.project, env, buildOther, reqNames: [req.name] });
       }
     }
   }

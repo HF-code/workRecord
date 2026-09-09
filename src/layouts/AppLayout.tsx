@@ -1,5 +1,5 @@
 import { Layout, Menu } from 'antd';
-import { BarChartOutlined, SettingOutlined } from '@ant-design/icons';
+import { BarChartOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 const { Header, Content } = Layout;
@@ -8,9 +8,10 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const isSettings = location.pathname.startsWith('/settings');
-  const selectedKey = isSettings ? '/settings' : '/';
-  // 需求记录页（瀑布流卡片）放开全屏宽度；系统配置页保留限宽，表单/表格全屏拉伸可读性差
-  const maxWidth = isSettings ? 1200 : undefined;
+  const isQuickBuild = location.pathname.startsWith('/quick-build');
+  const selectedKey = isSettings ? '/settings' : isQuickBuild ? '/quick-build' : '/';
+  // 需求记录页（瀑布流卡片）放开全屏宽度；系统配置 / 快速构建页保留限宽，表单/表格全屏拉伸可读性差
+  const maxWidth = isSettings || isQuickBuild ? 1200 : undefined;
 
   return (
     <Layout style={{ minHeight: '100vh', background: '#f5f5f5' }}>
@@ -64,6 +65,7 @@ export default function AppLayout() {
             onClick={({ key }) => navigate(key)}
             items={[
               { key: '/', icon: <BarChartOutlined />, label: '需求记录' },
+              { key: '/quick-build', icon: <ThunderboltOutlined />, label: '快速构建' },
               { key: '/settings', icon: <SettingOutlined />, label: '系统配置' },
             ]}
           />

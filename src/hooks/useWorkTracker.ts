@@ -230,9 +230,19 @@ export function useBranches() {
 
 /** 构建计划：复用每条需求上的 buildEnv / buildItems 字段（与需求列表同表存储） */
 export function useBuildPlan(update: (id: string, patch: Partial<Requirement>) => void, defaultBranch: BuildEnv) {
+  // 取分支配置，用于把目标分支映射为「构建命令」（build_other）
+  const { branches } = useBranches();
+
   /** 取某需求的目标分支（整需求共用），缺省为全局默认分支 */
   const getEnv = (req: Requirement): BuildEnv => {
     return req.buildEnv ?? defaultBranch;
+  };
+
+  /** 取某需求的构建命令（运维平台 build_other 字段）：优先分支配置 buildOther，缺省回退目标分支 */
+  const getBuildOther = (req: Requirement): string => {
+    const env = req.buildEnv ?? defaultBranch;
+    const cfg = branches.find((b) => b.value === env);
+    return (cfg?.buildOther && cfg.buildOther.trim()) || env;
   };
 
   const setEnv = (req: Requirement, env: BuildEnv) => {
@@ -260,5 +270,5 @@ export function useBuildPlan(update: (id: string, patch: Partial<Requirement>) =
     setSelectedFor(req, checked ? req.items.map((it) => it.id) : []);
   };
 
-  return { getEnv, setEnv, getSelected, toggleItem, toggleAll };
+  return { getEnv, getBuildOther, setEnv, getSelected, toggleItem, toggleAll };
 }

@@ -20,6 +20,8 @@ import {
   type MrSkipped,
   type MrTarget,
 } from '../batch';
+import { copyText } from '../utils/clipboard';
+import ArtifactList from './ArtifactList';
 
 interface Props {
   /** 选中的需求（全量数据，不受筛选影响） */
@@ -112,10 +114,10 @@ export default function BatchPanel({
   /** 复制构建清单：逐行 `项目名【目标分支】` */
   const handleCopyBuilds = async () => {
     const text = builds.map((b) => `${b.project}【${b.env}】`).join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyText(text);
+    if (ok) {
       message.success(`已复制 ${builds.length} 条构建目标`);
-    } catch {
+    } else {
       message.error('复制失败，请手动选择清单内容复制');
     }
   };
@@ -226,6 +228,9 @@ export default function BatchPanel({
           )}
         </ListCard>
       </div>
+
+      {/* 制品清单：与全局构建任务同源，构建完成后自动回查展示 file_url */}
+      <ArtifactList />
 
       {/* 下半：逐需求小框，项目+分支可 X 临时排除 */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

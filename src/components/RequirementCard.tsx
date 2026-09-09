@@ -143,7 +143,7 @@ export default function RequirementCard({
     try {
       // 每个 target 作为独立任务交给全局构建任务 store（含自动轮询重试）
       const results = await Promise.all(
-        targets.map((it) => startBuildTask(req.name, it.project, env)),
+        targets.map((it) => startBuildTask(req.name, it.project, env, buildPlan.getBuildOther(req))),
       );
       let okCount = 0;
       const fails: string[] = [];

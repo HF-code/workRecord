@@ -1,6 +1,7 @@
 import { createHashRouter, Navigate } from 'react-router-dom';
 import AppLayout from './layouts/AppLayout';
 import RequirementListPage from './pages/RequirementListPage';
+import QuickBuildPage from './pages/QuickBuildPage';
 import SettingsPage from './pages/SettingsPage';
 
 export const router = createHashRouter([
@@ -9,6 +10,7 @@ export const router = createHashRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <RequirementListPage /> },
+      { path: 'quick-build', element: <QuickBuildPage /> },
       {
         path: 'settings',
         children: [
