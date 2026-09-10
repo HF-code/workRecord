@@ -20,6 +20,7 @@ import FilterBar, { type FilterValue } from '../components/FilterBar';
 import { useBuildTasks, startBuildTask } from '../hooks/useBuildTasks';
 import { getCsrfToken, buildMergeRequestUrl, type BuildEnv } from '../build';
 import { getBatchItems, type BuildTarget, type MrSkipped, type MrTarget } from '../batch';
+import { openInNewTab } from '../utils/openTabs';
 
 const INITIAL_FILTER: FilterValue = {
   project: undefined,
@@ -212,11 +213,12 @@ export default function RequirementListPage() {
         skipped.push(`【${it.project}】未填写开发分支`);
         continue;
       }
-      window.open(buildMergeRequestUrl(gitUrl, it.branch, env), '_blank', 'noreferrer');
+      // <a> 模拟点击打开：绕过浏览器对连续 window.open 的弹窗拦截，可全部打开
+      openInNewTab(buildMergeRequestUrl(gitUrl, it.branch, env));
       opened += 1;
     }
     if (opened > 0) {
-      message.success(`已打开 ${opened} 个 MR 页面（${TRACK_LABELS[track]} → ${env}），如被拦截请重试`);
+      message.success(`已打开 ${opened} 个 MR 页面（${TRACK_LABELS[track]} → ${env}）`);
     }
     if (skipped.length > 0) {
       message.warning(`已跳过：${skipped.join('；')}`);
@@ -291,11 +293,11 @@ export default function RequirementListPage() {
     setBatchIncluded({});
   };
 
-  /** 批量 MR：全量打开 GitLab 预填页（同步循环），清单链接兜底浏览器拦截 */
+  /** 批量 MR：全量打开 GitLab 预填页（<a> 模拟点击，不受弹窗拦截限制） */
   const handleBatchMr = (targets: MrTarget[], skipped: MrSkipped[]) => {
-    targets.forEach((t) => window.open(t.url, '_blank', 'noreferrer'));
+    targets.forEach((t) => openInNewTab(t.url));
     if (targets.length > 0) {
-      message.success(`已打开 ${targets.length} 个 MR 页面，如被浏览器拦截请从上方清单逐个点击打开`);
+      message.success(`已打开 ${targets.length} 个 MR 页面`);
     }
     if (skipped.length > 0) {
       message.warning(`已跳过 ${skipped.length} 项：${skipped.map((s) => `【${s.project}】${s.reason}`).join('；')}`);
