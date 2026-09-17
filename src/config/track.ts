@@ -64,6 +64,14 @@ export function trackEnvOf(req: Requirement, track: Track): BuildEnv | null {
   return (track === 'weizan' ? req.envWeizan : req.envStar) ?? null;
 }
 
+/**
+ * 构建/MR 作用的环境：直接取该轨当前环境（未开始回退该轨首环境）。
+ * 每轨只有「当前环境」一个选择——构建与提交 MR 都作用于它，不再有单独的目标环境。
+ */
+export function trackBuildEnv(req: Requirement, track: Track): BuildEnv {
+  return trackEnvOf(req, track) ?? TRACK_ENVS[track][0];
+}
+
 /** 轨是否已上线（到达末段） */
 export function isTrackOnline(req: Requirement, track: Track): boolean {
   return trackEnvOf(req, track) === trackFinalEnv(track);
@@ -130,28 +138,6 @@ export function overallStatus(req: Requirement): OverallStatus {
   if (onlineCount > 0) return '部分上线';
   const allAtFirst = tracks.every((t) => trackStageIndex(t, trackEnvOf(req, t)) === 0);
   return allAtFirst ? '开发中' : '进行中';
-}
-
-/** 轨构建/MR 目标环境的推导默认值：当前阶段的下一环境（末段/未开始 → 首环境） */
-export function defaultTrackTarget(track: Track, env: BuildEnv | null): BuildEnv {
-  const envs = TRACK_ENVS[track];
-  if (env == null) return envs[0];
-  const idx = envs.indexOf(env);
-  if (idx < 0 || idx === envs.length - 1) return envs[envs.length - 1];
-  return envs[idx + 1];
-}
-
-/** 取需求某轨的构建/MR 目标环境（显式值优先，缺省按阶段推导） */
-export function trackTargetOf(req: Requirement, track: Track): BuildEnv {
-  const explicit = track === 'weizan' ? req.targetWeizan : req.targetStar;
-  if (explicit && TRACK_ENVS[track].includes(explicit)) return explicit;
-  return defaultTrackTarget(track, trackEnvOf(req, track));
-}
-
-/** 某轨的目标环境是否已显式设置（用于「恢复推导」判断，暂留） */
-export function hasExplicitTarget(req: Requirement, track: Track): boolean {
-  const explicit = track === 'weizan' ? req.targetWeizan : req.targetStar;
-  return !!explicit && TRACK_ENVS[track].includes(explicit);
 }
 
 /* ---------- 旧数据迁移 ---------- */

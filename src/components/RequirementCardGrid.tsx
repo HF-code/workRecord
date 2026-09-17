@@ -6,14 +6,12 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { Requirement, Track } from '../types';
-import type { DevopsApp } from '../config/devopsApps';
 import type { BuildEnv } from '../build';
 import type { BuildTask } from '../hooks/useBuildTasks';
 import RequirementCard from './RequirementCard';
 
 interface Props {
   data: Requirement[];
-  apps: DevopsApp[];
   /** 批量勾选的需求 id 集合 */
   selectedReqIds: Set<string>;
   /** 全局构建任务（卡片构建小灯数据源） */
@@ -22,9 +20,9 @@ interface Props {
   onEdit: (req: Requirement) => void;
   onDelete: (id: string) => void;
   onChangeReleaseDate: (id: string, date: string | null) => void;
-  onAdvanceTrack: (reqId: string, track: Track, env: BuildEnv | null) => void;
+  /** 设置某轨当前环境（null = 重置为未开始）；构建与 MR 都作用于该环境 */
+  onSetTrackEnv: (reqId: string, track: Track, env: BuildEnv | null) => void;
   onToggleTestPass: (reqId: string, track: Track, pass: boolean) => void;
-  onSetTarget: (reqId: string, track: Track, env: BuildEnv) => void;
   onTrackBuild: (req: Requirement, track: Track) => void;
   onTrackMr: (req: Requirement, track: Track) => void;
   /** 移除某轨（卡片 X） */
@@ -38,16 +36,14 @@ const GAP = 12;
 
 export default function RequirementCardGrid({
   data,
-  apps,
   selectedReqIds,
   tasks,
   onToggleSelect,
   onEdit,
   onDelete,
   onChangeReleaseDate,
-  onAdvanceTrack,
+  onSetTrackEnv,
   onToggleTestPass,
-  onSetTarget,
   onTrackBuild,
   onTrackMr,
   onRemoveTrack,
@@ -86,16 +82,14 @@ export default function RequirementCardGrid({
             <RequirementCard
               key={req.id}
               req={req}
-              apps={apps}
               selected={selectedReqIds.has(req.id)}
               tasks={tasks}
               onToggleSelect={onToggleSelect}
               onEdit={onEdit}
               onDelete={onDelete}
               onChangeReleaseDate={onChangeReleaseDate}
-              onAdvanceTrack={onAdvanceTrack}
+              onSetTrackEnv={onSetTrackEnv}
               onToggleTestPass={onToggleTestPass}
-              onSetTarget={onSetTarget}
               onTrackBuild={onTrackBuild}
               onTrackMr={onTrackMr}
               onRemoveTrack={onRemoveTrack}

@@ -46,7 +46,7 @@ export default function RequirementListPage() {
     merge,
   } = useRequirements();
   const devopsApps = useDevopsApps();
-  const buildPlan = useBuildPlan(update);
+  const buildPlan = useBuildPlan();
   const { tasks, activeCount } = useBuildTasks();
 
   // 常驻右侧构建面板（默认展开）
@@ -59,10 +59,9 @@ export default function RequirementListPage() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
 
-  // 批量选择状态：卡片勾选 + 面板 X 的临时排除 / 配置排除的临时恢复
+  // 批量选择状态：卡片勾选 + 面板 X 的临时排除
   const [selectedReqIds, setSelectedReqIds] = useState<Set<string>>(new Set());
   const [batchExcluded, setBatchExcluded] = useState<Record<string, string[]>>({});
-  const [batchIncluded, setBatchIncluded] = useState<Record<string, string[]>>({});
   const [batchBuilding, setBatchBuilding] = useState(false);
 
   const filtered = useMemo(() => {
@@ -119,9 +118,9 @@ export default function RequirementListPage() {
 
   /** 老数据已在加载时一次性静默迁移（useWorkTracker → migrateToDualTrackOnce），无需按钮 */
 
-  /** 推进某轨阶段（卡片阶段 Select 共用入口）：
-   *  推进到新阶段时重置该轨「测试通过」标记（新阶段尚未测试）。 */
-  const handleAdvanceTrack = (reqId: string, track: Track, env: BuildEnv | null) => {
+  /** 设置某轨当前环境（卡片环境 Select 入口；构建/MR 都作用于该环境）：
+   *  切换环境时重置该轨「测试通过」标记（新环境尚未测试）。 */
+  const handleSetTrackEnv = (reqId: string, track: Track, env: BuildEnv | null) => {
     const req = requirements.find((r) => r.id === reqId);
     if (!req) return;
     const patch: Partial<Requirement> =
@@ -138,31 +137,26 @@ export default function RequirementListPage() {
     update(reqId, track === 'weizan' ? { testPassWeizan: pass } : { testPassStar: pass });
   };
 
-  /** 显式设置某轨构建/MR 目标环境 */
-  const handleSetTarget = (reqId: string, track: Track, env: BuildEnv) => {
-    update(reqId, track === 'weizan' ? { targetWeizan: env } : { targetStar: env });
-  };
-
   /** 移除某轨（卡片 X）：该需求不走此轨发布，卡片上可「+ xx轨」恢复 */
   const handleRemoveTrack = (reqId: string, track: Track) => {
     update(
       reqId,
       track === 'weizan'
-        ? { envWeizan: undefined, testPassWeizan: false, targetWeizan: undefined }
-        : { envStar: undefined, testPassStar: false, targetStar: undefined },
+        ? { envWeizan: undefined, testPassWeizan: false }
+        : { envStar: undefined, testPassStar: false },
     );
     message.info(`已移除${TRACK_LABELS[track]}轨，可在卡片上重新添加`);
   };
 
-  /** 某轨构建（卡片）：作用于该需求全部有效项目（排除「不参与构建」），目标=该轨目标环境 */
+  /** 某轨构建（卡片）：作用于该轨当前环境 × 该需求全部项目 */
   const handleTrackBuild = async (req: Requirement, track: Track) => {
     if (!getCsrfToken()) {
       message.warning('未登录运维平台，请先登录后再构建');
       return;
     }
-    const items = getBatchItems(req, {}, devopsApps.apps, {});
+    const items = getBatchItems(req, {});
     if (items.length === 0) {
-      message.warning('该需求无有效构建项目');
+      message.warning('该需求未登记项目');
       return;
     }
     const env = buildPlan.getTarget(req, track);
@@ -197,10 +191,10 @@ export default function RequirementListPage() {
     }
   };
 
-  /** 某轨提交 MR（卡片）：打开该需求全部有效项目到该轨目标环境的 GitLab 预填 MR 链接 */
+  /** 某轨提交 MR（卡片）：打开该需求全部项目到该轨当前环境的 GitLab 预填 MR 链接 */
   const handleTrackMr = (req: Requirement, track: Track) => {
     const env = buildPlan.getTarget(req, track);
-    const items = getBatchItems(req, {}, devopsApps.apps, {});
+    const items = getBatchItems(req, {});
     const skipped: string[] = [];
     let opened = 0;
     for (const it of items) {
@@ -228,7 +222,7 @@ export default function RequirementListPage() {
   /**
    * 卡片勾选/取消（需求级批量选择）：
    * 勾选卡片 = 该需求全部项目直接进入批量范围；
-   * 勾选时清空该需求的临时排除/恢复（重新勾选 = 恢复全量参与）；取消时同步清空。
+   * 勾选时清空该需求的临时排除（重新勾选 = 恢复全量参与）；取消时同步清空。
    */
   const handleToggleSelect = (reqId: string, checked: boolean) => {
     if (checked) {
@@ -246,12 +240,6 @@ export default function RequirementListPage() {
       delete next[reqId];
       return next;
     });
-    setBatchIncluded((m) => {
-      if (!(reqId in m)) return m;
-      const next = { ...m };
-      delete next[reqId];
-      return next;
-    });
   };
 
   /**
@@ -263,8 +251,8 @@ export default function RequirementListPage() {
     if (!req) return;
     setBatchExcluded((m) => {
       const next = { ...m, [reqId]: [...(m[reqId] ?? []), itemId] };
-      // 判断移除后该需求是否还有有效项目（含配置排除恢复项）
-      const remaining = getBatchItems(req, next, devopsApps.apps, batchIncluded).length;
+      // 判断移除后该需求是否还有参与批量的项目
+      const remaining = getBatchItems(req, next).length;
       if (remaining === 0) {
         setSelectedReqIds((s) => {
           const sel = new Set(s);
@@ -278,19 +266,9 @@ export default function RequirementListPage() {
     });
   };
 
-  /** 批量面板「仍构建」：把被项目配置默认排除的项本次纳入批量（仅会话态） */
-  const handleIncludeItem = (reqId: string, itemId: string) => {
-    setBatchIncluded((m) => {
-      const list = m[reqId] ?? [];
-      if (list.includes(itemId)) return m;
-      return { ...m, [reqId]: [...list, itemId] };
-    });
-  };
-
   const handleClearSelection = () => {
     setSelectedReqIds(new Set());
     setBatchExcluded({});
-    setBatchIncluded({});
   };
 
   /** 批量 MR：全量打开 GitLab 预填页（<a> 模拟点击，不受弹窗拦截限制） */
@@ -380,12 +358,6 @@ export default function RequirementListPage() {
       return next;
     });
     setBatchExcluded((m) => {
-      if (!(id in m)) return m;
-      const next = { ...m };
-      delete next[id];
-      return next;
-    });
-    setBatchIncluded((m) => {
       if (!(id in m)) return m;
       const next = { ...m };
       delete next[id];
@@ -567,9 +539,7 @@ export default function RequirementListPage() {
             apps={devopsApps.apps}
             buildPlan={buildPlan}
             excluded={batchExcluded}
-            included={batchIncluded}
             onRemoveItem={handleRemoveItem}
-            onIncludeItem={handleIncludeItem}
             onClearSelection={handleClearSelection}
             onBatchMr={handleBatchMr}
             onBatchBuild={handleBatchBuild}
@@ -606,16 +576,14 @@ export default function RequirementListPage() {
                   </div>
                   <RequirementCardGrid
                     data={g.reqs}
-                    apps={devopsApps.apps}
                     selectedReqIds={selectedReqIds}
                     tasks={tasks}
                     onToggleSelect={handleToggleSelect}
                     onEdit={openEditForm}
                     onDelete={handleDelete}
                     onChangeReleaseDate={(id, releaseDate) => update(id, { releaseDate })}
-                    onAdvanceTrack={handleAdvanceTrack}
+                    onSetTrackEnv={handleSetTrackEnv}
                     onToggleTestPass={handleToggleTestPass}
-                    onSetTarget={handleSetTarget}
                     onTrackBuild={(req, track) => void handleTrackBuild(req, track)}
                     onTrackMr={handleTrackMr}
                     onRemoveTrack={handleRemoveTrack}

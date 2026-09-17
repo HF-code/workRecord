@@ -1,12 +1,12 @@
 /**
  * 需求卡片：单需求的配置与操作单元（列表视图，按发版日分组展示）。
  * 结构：头部（勾选 + 需求名外链 + 版本 Tag + 构建小灯 + ⋯菜单）
- *      → 双轨区（微赞/星享各一块：阶段推进 + 测试通过 + 目标环境 + 构建/提交MR；
+ *      → 双轨区（微赞/星享各一块：当前环境 + 测试通过 + 构建/提交MR；
  *        每块可 X 移除该轨，移除后可点「+ xx轨」恢复为未开始）
  *      → 发版时间 / 备注
- *      → 项目区（项目 + 分支 + 「不构建」灰显标识，超 4 个折叠）。
+ *      → 项目区（项目 + 分支，超 4 个折叠）。
  * 卡片背景按整体派生状态分色（开发中/进行中/已发布），选中态黑描边。
- * 构建/MR 按轨操作，作用于该需求全部有效项目（排除「不参与构建」）。
+ * 构建/MR 按轨操作：作用于该轨当前环境，覆盖该需求全部项目。
  * 构建小灯：按全局构建任务（reqIds 命中本需求）显示 进行中/失败/成功 圆点，点击展开右侧面板。
  */
 import { useState } from 'react';
@@ -15,7 +15,6 @@ import { CloseOutlined, ExportOutlined, MoreOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { MenuProps } from 'antd';
 import type { Requirement, Track } from '../types';
-import type { DevopsApp } from '../config/devopsApps';
 import { buildLightLevel, getBuildLight } from '../utils/buildLight';
 import {
   CLUSTER_COLOR,
@@ -25,13 +24,11 @@ import {
   overallStatus,
   trackEnvOf,
   trackStatus,
-  trackTargetOf,
 } from '../config/track';
-import { getCardTone, isBuildExcluded } from '../batch';
+import { getCardTone } from '../batch';
 
 interface Props {
   req: Requirement;
-  apps: DevopsApp[];
   /** 批量勾选态（卡片黑色描边） */
   selected: boolean;
   /** 全局构建任务（构建小灯数据源） */
@@ -40,15 +37,13 @@ interface Props {
   onEdit: (req: Requirement) => void;
   onDelete: (id: string) => void;
   onChangeReleaseDate: (id: string, date: string | null) => void;
-  /** 推进某轨阶段（null = 重置为未开始） */
-  onAdvanceTrack: (reqId: string, track: Track, env: import('../build').BuildEnv | null) => void;
+  /** 设置某轨当前环境（null = 重置为未开始）；构建与 MR 都作用于该环境 */
+  onSetTrackEnv: (reqId: string, track: Track, env: import('../build').BuildEnv | null) => void;
   /** 切换某轨「测试通过」手动标记 */
   onToggleTestPass: (reqId: string, track: Track, pass: boolean) => void;
-  /** 显式设置某轨构建/MR 目标环境 */
-  onSetTarget: (reqId: string, track: Track, env: import('../build').BuildEnv) => void;
-  /** 某轨构建（作用于该需求全部有效项目） */
+  /** 某轨构建（作用于该轨当前环境 × 该需求全部项目） */
   onTrackBuild: (req: Requirement, track: Track) => void;
-  /** 某轨提交 MR（作用于该需求全部有效项目） */
+  /** 某轨提交 MR（作用于该轨当前环境 × 该需求全部项目） */
   onTrackMr: (req: Requirement, track: Track) => void;
   /** 移除某轨（该需求不走此轨发布，卡片上可再添加回来） */
   onRemoveTrack: (reqId: string, track: Track) => void;
@@ -64,16 +59,14 @@ const TRACKS: Track[] = ['weizan', 'star'];
 
 export default function RequirementCard({
   req,
-  apps,
   selected,
   tasks,
   onToggleSelect,
   onEdit,
   onDelete,
   onChangeReleaseDate,
-  onAdvanceTrack,
+  onSetTrackEnv,
   onToggleTestPass,
-  onSetTarget,
   onTrackBuild,
   onTrackMr,
   onRemoveTrack,
@@ -180,7 +173,6 @@ export default function RequirementCard({
         const env = trackEnvOf(req, track);
         const testPass = track === 'weizan' ? req.testPassWeizan : req.testPassStar;
         const statusView = trackStatus(track, env, testPass);
-        const target = trackTargetOf(req, track);
         const online = isTrackOnline(req, track);
         const cluster = track === 'weizan' ? '微赞' : '星享';
         return (
@@ -239,28 +231,18 @@ export default function RequirementCard({
                 />
               </Tooltip>
             </div>
-            {/* 操作行：阶段推进 + 目标环境 + 构建 + 提交MR */}
+            {/* 操作行：当前环境 + 构建 + 提交MR（构建/MR 都作用于当前环境） */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <Tooltip title="推进该轨到某环境">
+              <Tooltip title="该轨当前环境：构建与提交 MR 都作用于此环境">
                 <Select
                   size="small"
                   style={{ width: 112 }}
                   value={env ?? undefined}
                   placeholder="未开始"
                   allowClear
-                  onChange={(v) => onAdvanceTrack(req.id, track, (v as typeof target) ?? null)}
+                  onChange={(v) => onSetTrackEnv(req.id, track, (v as import('../build').BuildEnv) ?? null)}
                   options={TRACK_ENVS[track].map((e) => ({ label: e, value: e }))}
                   data-testid={`card-track-env-select-${track}-${req.id}`}
-                />
-              </Tooltip>
-              <Tooltip title="该轨构建 / MR 的目标环境（默认取下一环境，可改）">
-                <Select
-                  size="small"
-                  style={{ width: 112 }}
-                  value={target}
-                  onChange={(v) => onSetTarget(req.id, track, v as typeof target)}
-                  options={TRACK_ENVS[track].map((e) => ({ label: e, value: e }))}
-                  data-testid={`card-track-target-select-${track}-${req.id}`}
                 />
               </Tooltip>
               <Button
@@ -294,7 +276,7 @@ export default function RequirementCard({
               key={track}
               size="small"
               type="dashed"
-              onClick={() => onAdvanceTrack(req.id, track, null)}
+              onClick={() => onSetTrackEnv(req.id, track, null)}
               style={{ fontSize: 12 }}
               data-testid={`card-track-add-${track}-${req.id}`}
             >
@@ -321,29 +303,12 @@ export default function RequirementCard({
         </div>
       ) : null}
 
-      {/* 项目区：项目名 + 分支；超限折叠；「不构建」项目灰显 */}
+      {/* 项目区：项目名 + 分支；超限折叠 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {visibleItems.map((it) => {
-          const excluded = isBuildExcluded(apps, it.project);
           return (
             <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span
-                style={{
-                  fontSize: 12,
-                  flexShrink: 0,
-                  color: excluded ? '#bbb' : undefined,
-                  textDecoration: excluded ? 'line-through' : undefined,
-                }}
-              >
-                {it.project}
-              </span>
-              {excluded && (
-                <Tooltip title="项目配置中标记为不参与构建；按轨构建会自动跳过">
-                  <Tag style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '16px' }} color="default">
-                    不构建
-                  </Tag>
-                </Tooltip>
-              )}
+              <span style={{ fontSize: 12, flexShrink: 0 }}>{it.project}</span>
               <span
                 style={{
                   flex: 1,

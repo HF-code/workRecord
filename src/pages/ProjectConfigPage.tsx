@@ -154,7 +154,7 @@ export default function ProjectConfigPage() {
     },
     {
       title: (
-        <Tooltip title="批量 / 单卡 / 快速构建默认跳过该项目（如固定不纳入构建的小程序）；卡片与批量面板可临时「仍构建」">
+        <Tooltip title="快速构建默认跳过该项目（如固定不纳入构建的小程序）；需要时可在快速构建页开关「本次包含」。需求列表的构建/MR 不受此影响">
           不参与构建
         </Tooltip>
       ),
@@ -198,15 +198,11 @@ export default function ProjectConfigPage() {
       <div
         style={{
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           alignItems: 'center',
           marginBottom: 8,
         }}
       >
-        <div style={{ color: '#888', fontSize: 12 }}>
-          共 {apps.length} 个项目 · 最近同步：
-          {syncedAt ? dayjs(syncedAt).format('YYYY-MM-DD HH:mm') : '从未同步'}
-        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Input.Search
             allowClear

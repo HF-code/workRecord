@@ -148,7 +148,7 @@ export default function BranchConfigPage() {
   return (
     <Card>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
-        构建按钮前的分支下拉选项，可在此自定义增删与排序（拖拽行顺序调整）及默认选中项。
+        构建按钮前的分支下拉选项，可在此自定义增删与默认选中项。
         内置环境：{BUILTIN_BUILD_ENVS.join(' / ')}；也可输入自定义分支标识（需运维平台支持）。
         「构建命令」为该分支构建时实际传给运维平台的 build_other 字段，默认与分支标识相同；当两者不一致时（如分支标识=pre 但构建命令=pre-txnj）填写。
       </Typography.Paragraph>

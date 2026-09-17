@@ -1,29 +1,37 @@
-# 规划文档索引（docs/plans）
+# 规划文档索引（docs）
 
-> 统一管理本项目所有规划文档，便于后续查阅。状态说明：✅已完成 / 🔧进行中 / 📋规划中 / 📚参考。
+> 统一管理本项目所有规划/参考文档。状态说明：✅已落地（保留作参考） / 🔧进行中 / 📋规划中 / 📚背景参考。
 
-## 钉钉构建桥接（本主题）
+## 〇、先读这个：项目全貌
+
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| `dingtalk-build-bridge-plan.md` | 完整架构：web×钉钉构建通知，含 bridge-server 定位、DB 取舍、分阶段、接口草案、鉴权 | 📋规划中 |
-| `dingtalk-build-phase1-plan.md` | 一阶段执行细节：web 构建回显 + 钉钉 @构建 回复制品（无 DB） | 🔧待实施 |
+| `架构导读.md`（docs 根目录） | **项目地图 + 五个核心文件导读 + 改动导航表（30+ 条）+ 8 个易踩坑 + 术语表 + 60 分钟上手清单**。不逐行读代码也能掌握全貌；改需求时直接查导航表定位落点 | ✅长期有效 |
 
-## 服务端 / 构建链路（既有决策）
+## 一、当前架构与实施记录（已落地，改动前建议先读）
+
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| `../build-cross-origin-plan.md` | 跨域构建方案：本地 vite proxy + 远程 mywork-server(Koa2) 转发 /devops-api；登录态落在 mywork-server 域 | ✅已完成 |
-| （extract-server-to-standalone-project） | 将 server 抽为独立项目 mywork-server 的决策记录，结论已落地于 build-cross-origin-plan | ✅已完成 |
+| `plans/dual-track-rework-plan.md` | **双轨环境模型（当前架构权威说明）**：微赞轨/星享轨并行推进、派生状态、按轨构建/MR、一次性迁移 | ✅已落地 |
+| `build-cross-origin-plan.md` | 跨域构建方案：Vite proxy + mywork-server(Koa2) 转发 `/devops-api`，登录 cookie 落在本地服务域 | ✅已落地 |
+| `plans/dingtalk-build-phase1-dev-plan.md` | 钉钉构建桥 · 阶段一实施清单：账号绑定、`/构建` 命令、制品回推（现走钉钉 Stream 模式） | ✅已落地 |
+| `dingtalk-local-debug.md` | 钉钉构建桥 · 本地调试手册（"外接钉钉"设置、服务启动、常见问题） | 🔧使用手册 |
 
-## 其他规划 / 产品文档（位于 `docs/`）
+## 二、架构与未来规划
+
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| `../devops-delivery-platform-plan.md` | 运维交付平台相关 | 📚参考 |
-| `../devops-projects-sync-plan.md` | 运维项目同步相关 | 📚参考 |
-| `../modularize-routing-plan.md` | 路由模块化 | 📚参考 |
-| `../system-plan.md` | 系统架构 | 📚参考 |
-| `../work-tracker-plan.md` | work-tracker 功能规划 | 📚参考 |
-| `../产品计划书.md` | 产品计划书 | 📚参考 |
+| `plans/dingtalk-build-bridge-plan.md` | 钉钉桥接完整架构：阶段一无 DB / 阶段二上 DB 做共享源、鉴权设计、通道取舍（微信已放弃） | 📋阶段二待启动 |
+| `devops-delivery-platform-plan.md` | 测试环境自动化交付平台产品方案（多角色、状态机、MR 编排、Phase 1 细节） | 📚未来规划 |
+| `system-plan.md` | 内部交付协作平台系统计划（角色权限、操作留痕、AI 报告链路） | 📚未来规划 |
+| `产品计划书.md` | 产品计划书（背景痛点、目标、核心能力闭环） | 📚产品背景 |
+| `prototype.html` | 协作平台交互原型（浏览器直接打开查看） | 📚原型参考 |
 
-## 清理记录
-- 已删除 `.codebuddy/plans/` 下与 `docs/` 正式版重复的规划工具草稿（card-batch-redesign / quick-batch-build / ui-revamp / build-node-server / extract-server 等），避免分散与过期内容干扰查阅。
-- 钉钉方案从 `docs/` 根目录迁入本 `docs/plans/` 文件夹。
+## 三、清理记录
+
+- **2026-09-14 清理**：删除 10 份已完成/已废弃的计划，避免过期内容干扰查阅：
+  - 已被「双轨重构」推翻：`board-ux-optimization-dev-plan.md`、`board-ux-revise-plan.md`、`feedback-optimization-plan.md`（原「环境看板 + 单流水线」方案，看板组件已从代码中移除，结论由 `dual-track-rework-plan.md` 取代）。
+  - 与保留文档重叠：`dingtalk-build-phase1-plan.md`（内容并入 `dingtalk-build-phase1-dev-plan.md`）。
+  - 已落地且固化在代码中：`quick-batch-build-plan.md`、`ui-revamp-plan.md`、`card-batch-redesign-plan.md`、`modularize-routing-plan.md`、`devops-projects-sync-plan.md`、`work-tracker-plan.md`。
+  - 需要回溯历史版本时：`git log --diff-filter=D --name-only -- docs/` 找到删除提交，`git show <commit>^:<path>` 查看原文。
+- 注：`.codebuddy/plans/` 是 IDE 规划工具草稿目录（与 `docs/plans/` 部分内容重复），后续查阅与维护以 `docs/plans/` 为准。

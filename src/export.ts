@@ -83,8 +83,6 @@ function isValidRequirement(v: unknown): v is Requirement {
     isValidTrackEnv(r.envStar) &&
     (r.testPassWeizan === undefined || typeof r.testPassWeizan === 'boolean') &&
     (r.testPassStar === undefined || typeof r.testPassStar === 'boolean') &&
-    isValidTrackEnv(r.targetWeizan) &&
-    isValidTrackEnv(r.targetStar) &&
     validBuildItems
   );
 }

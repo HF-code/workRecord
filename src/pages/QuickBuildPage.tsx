@@ -105,10 +105,13 @@ export default function QuickBuildPage() {
   const apps = devopsApps.apps;
   const defaultEnv = getDefaultBranch(branches);
 
-  // 恢复持久化状态（env 为空串时回退默认分支）
-  const restored = loadState();
-  const [batches, setBatches] = useState<QuickBatch[]>(restored?.batches ?? []);
-  const [env, setEnv] = useState<BuildEnv>(restored?.env || defaultEnv);
+  // 恢复持久化状态（惰性初始化：仅首次渲染读取一次 localStorage，避免每帧 JSON 解析；env 为空串时回退系统默认分支）
+  const [{ batches: initialBatches, env: initialEnv }] = useState(() => {
+    const restored = loadState();
+    return { batches: restored?.batches ?? [], env: restored?.env || defaultEnv };
+  });
+  const [batches, setBatches] = useState<QuickBatch[]>(initialBatches);
+  const [env, setEnv] = useState<BuildEnv>(initialEnv);
   const [input, setInput] = useState('');
   const [building, setBuilding] = useState(false);
   // 是否包含被项目配置标记「不参与构建」的项目（会话态，默认跳过）

@@ -1,7 +1,12 @@
 # 钉钉构建桥 · 本地调试手册
 
 > 适用：阶段一（web 透传 + 钉钉旁路）本地联调。
-> 配置已就位：`mywork-server/.env`（COOKIE_KEY / DINGTALK_APP_SECRET / DINGTALK_ROBOT_TOKEN 三项，已 gitignore）。
+> 配置已就位：`mywork-server/.env`（COOKIE_KEY / DINGTALK_* 各项，已 gitignore）。
+>
+> **2026-09-14 更新（当前状态）**：
+> - **端口**：以启动时的 `PORT` 环境变量为准，当前联调使用 **8093**（`vite.config.ts` 的 `/devops-api`、`/api` 代理均已指向 8093）；下文中出现的 8080 如与实际不符，按 8093 理解。
+> - **接收消息模式已升级为钉钉 Stream 模式**（企业内部机器人，免公网回调）：启动日志出现「钉钉 Stream 模式已启用」即为生效。**第 3、4 节（隧道 + HTTP 回调）仅在使用群自定义机器人 HTTP 回调模式时才需要**，Stream 模式可跳过。
+> - 排错：日志反复出现 `[dingtalk] 获取 token 失败` 时，检查 `DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE` 是否与钉钉开放平台应用一致、应用是否已发布/授权。
 
 ## 0. 前置：重启 8080 服务（重要）
 
@@ -36,7 +41,7 @@ npm run dev
    - 失败"请求未携带 devops cookie" → 回到第 1 步；
    - 失败"cookie 身份与填写的 email 不一致" → 改用提示里的真实 email。
 
-## 3. 隧道暴露 8080（钉钉回调需要公网 HTTPS）
+## 3. 隧道暴露 8080（仅 HTTP 回调模式需要；Stream 模式可跳过）
 
 钉钉"接收消息"回调要求公网 HTTPS 地址，本地用隧道：
 

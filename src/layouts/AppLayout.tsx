@@ -35,7 +35,6 @@ export default function AppLayout() {
         <div
           style={{
             width: '100%',
-            maxWidth,
             display: 'flex',
             alignItems: 'center',
             gap: 32,

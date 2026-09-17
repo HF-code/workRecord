@@ -1,6 +1,7 @@
 # 阶段一开发计划（任务清单）：钉钉绑定构建 + 制品回 push
 
-> 依据：`docs/plans/dingtalk-build-bridge-plan.md` + `dingtalk-build-phase1-plan.md`。
+> **状态：✅已实施完成**（A~G 全部落地于 `mywork-server` 与前端设置页；接收消息现走钉钉 **Stream 模式**，免公网回调）。
+> 依据：`docs/plans/dingtalk-build-bridge-plan.md`。
 > 目标产物：mywork-server 扩展 + mywork 设置页卡片；跑通"web 透传不动 + 钉钉 `/绑定`/`/构建` 回复制品"。
 > 外部依赖（已给定）：
 > - 用户信息接口：`GET https://devops.vzan.com/system/user` → `{ email }`（校验 cookie 身份）

@@ -35,10 +35,6 @@ export interface Requirement {
   testPassWeizan?: boolean;
   /** 星享轨「测试通过」手动标记 */
   testPassStar?: boolean;
-  /** 微赞轨构建/MR 目标环境（缺省 = 当前阶段的下一环境推导） */
-  targetWeizan?: BuildEnv;
-  /** 星享轨构建/MR 目标环境（缺省推导同上） */
-  targetStar?: BuildEnv;
   /**
    * 旧数据遗留状态字段（历史 9/10 态枚举），已废弃——
    * 展示与筛选统一使用 config/track.ts 的派生状态（双轨投影），不再写入。

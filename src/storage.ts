@@ -1,13 +1,19 @@
 import type { Requirement } from './types';
-import type { BuildEnv } from './build';
 import { DEFAULT_DEVOPS_APPS, type DevopsApp } from './config/devopsApps';
 import { DEFAULT_BRANCHES, type BranchConfig } from './config/branches';
 import { normalizePollInterval } from './config/buildConfig';
 
+/* ---------- localStorage 存储键定义（按业务数据分类） ---------- */
+
+/** 需求列表：Requirement[]，包含需求基础信息与双轨环境（微赞/星享当前环境、测试通过标记等） */
 const REQ_KEY = 'work-tracker:requirements:v1';
+/** 运维平台应用配置：DevopsApp[]，项目名/别名/分组/gitUrl/是否参与构建，缺失时回退 DEFAULT_DEVOPS_APPS */
 const DEVOPS_APPS_KEY = 'work-tracker:devops-apps:v1';
+/** 运维平台应用最近一次同步成功时间：ISO 字符串（非 JSON），从未同步时为 null */
 const DEVOPS_SYNCED_AT_KEY = 'work-tracker:devops-apps:synced-at';
+/** 构建分支配置：BranchConfig[]，可选目标分支清单，缺失时回退 DEFAULT_BRANCHES */
 const BRANCHES_KEY = 'work-tracker:branches:v1';
+/** 构建状态轮询间隔（秒）：纯数字字符串，非法值由 normalizePollInterval 归一化 */
 const BUILD_POLL_INTERVAL_KEY = 'work-tracker:build-poll-interval:v1';
 
 function loadJson<T>(key: string, fallback: T): T {
@@ -121,8 +127,8 @@ export function migrateDevopsAppsExcludeFlag(): void {
   }
 }
 
-/** 一次性迁移：将旧版本独立存储的构建目标分支 / 勾选项并回 requirements（同表），并清理旧 key。
- *  双轨模型下旧 buildEnv 按环境所属集群落到对应轨的目标环境字段。 */
+/** 一次性迁移：将旧版本独立存储的勾选项并回 requirements（同表），并清理旧 key。
+ *  旧「构建目标分支」已废弃（构建/MR 现在直接取轨当前环境），随迁移一并丢弃。 */
 export function migrateLegacyBuildPlan(): void {
   const LEGACY_ENVS_KEY = 'work-tracker:build-envs:v1';
   const LEGACY_SELECTED_KEY = 'work-tracker:build-selected:v1';
@@ -130,25 +136,13 @@ export function migrateLegacyBuildPlan(): void {
     const rawEnvs = localStorage.getItem(LEGACY_ENVS_KEY);
     const rawSelected = localStorage.getItem(LEGACY_SELECTED_KEY);
     if (!rawEnvs && !rawSelected) return;
-    const envs = rawEnvs ? (JSON.parse(rawEnvs) as Record<string, string>) : {};
     const selected = rawSelected ? (JSON.parse(rawSelected) as Record<string, string[]>) : {};
     const list = loadRequirements();
-    const next = list.map((r) => {
-      const patch: Record<string, unknown> = {
-        buildItems: (selected[r.id] as string[] | undefined) ?? r.buildItems,
-      };
-      const legacyEnv = envs[r.id] as BuildEnv | undefined;
-      if (legacyEnv) {
-        // 旧目标分支按环境所属集群落到对应轨的显式目标（微赞 test/pre → targetWeizan，星享环境 → targetStar）
-        if (legacyEnv === 'dev' || legacyEnv === 'test' || legacyEnv === 'pre' || legacyEnv === 'master') {
-          patch.targetWeizan = legacyEnv;
-        } else {
-          patch.targetStar = legacyEnv;
-        }
-      }
-      return { ...r, ...patch };
-    });
-    saveRequirements(next as typeof list);
+    const next = list.map((r) => ({
+      ...r,
+      buildItems: (selected[r.id] as string[] | undefined) ?? r.buildItems,
+    }));
+    saveRequirements(next);
     localStorage.removeItem(LEGACY_ENVS_KEY);
     localStorage.removeItem(LEGACY_SELECTED_KEY);
   } catch {

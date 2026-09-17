@@ -4,7 +4,7 @@ import type { DevopsApp } from '../config/devopsApps';
 import type { BranchConfig } from '../config/branches';
 import { DEFAULT_BRANCHES } from '../config/branches';
 import type { BuildEnv } from '../build';
-import { backfillRequirement, trackTargetOf } from '../config/track';
+import { backfillRequirement, trackBuildEnv } from '../config/track';
 import {
   loadBranches,
   loadDevopsApps,
@@ -37,6 +37,27 @@ function migrateToDualTrackOnce(): void {
   }
 }
 
+/** 一次性清理标记 key：移除已废弃的每轨「目标环境」字段 */
+const LEGACY_TARGET_STRIPPED_KEY = 'work-tracker:dual-track:strip-targets:v1';
+
+/** 一次性清理：删除旧数据的 targetWeizan/targetStar（构建/MR 已改为直接取当前环境） */
+function stripLegacyTrackTargetsOnce(): void {
+  try {
+    if (localStorage.getItem(LEGACY_TARGET_STRIPPED_KEY)) return;
+    const list = loadRequirements();
+    const next = list.map((r) => {
+      const copy = { ...r } as Requirement & { targetWeizan?: unknown; targetStar?: unknown };
+      delete copy.targetWeizan;
+      delete copy.targetStar;
+      return copy;
+    });
+    saveRequirements(next);
+    localStorage.setItem(LEGACY_TARGET_STRIPPED_KEY, '1');
+  } catch {
+    // 清理失败不影响主流程
+  }
+}
+
 /** 生成 UUID，兼容不支持 crypto.randomUUID 的环境（如 file:// 或非安全上下文） */
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -54,6 +75,8 @@ export function useRequirements() {
     migrateLegacyBuildPlan();
     // 一次性静默迁移：旧单流水线数据拆到双轨（含旧流水线类型决定隐藏哪条轨）
     migrateToDualTrackOnce();
+    // 一次性静默清理：删除已废弃的每轨「目标环境」字段
+    stripLegacyTrackTargetsOnce();
     return loadRequirements();
   });
 
@@ -193,24 +216,19 @@ export function useBranches() {
   return { branches, save, reset };
 }
 
-/** 构建计划：按轨取/设构建与 MR 的目标环境（显式值优先，缺省按轨阶段推导） */
-export function useBuildPlan(update: (id: string, patch: Partial<Requirement>) => void) {
-  // 取分支配置，用于把目标环境映射为「构建命令」（build_other）
+/** 构建计划：按轨取构建与 MR 作用的环境（= 该轨当前环境，未开始回退首环境） */
+export function useBuildPlan() {
+  // 取分支配置，用于把环境映射为「构建命令」（build_other）
   const { branches } = useBranches();
 
-  /** 取某需求某轨的构建/MR 目标环境 */
-  const getTarget = (req: Requirement, track: Track): BuildEnv => trackTargetOf(req, track);
+  /** 取某需求某轨构建/MR 作用的环境 */
+  const getTarget = (req: Requirement, track: Track): BuildEnv => trackBuildEnv(req, track);
 
-  /** 取某目标环境对应的构建命令（运维平台 build_other 字段）：优先分支配置 buildOther，缺省回退环境本身 */
+  /** 取某环境对应的构建命令（运维平台 build_other 字段）：优先分支配置 buildOther，缺省回退环境本身 */
   const getBuildOther = (env: BuildEnv): string => {
     const cfg = branches.find((b) => b.value === env);
     return (cfg?.buildOther && cfg.buildOther.trim()) || env;
   };
 
-  /** 显式设置某轨的构建/MR 目标环境 */
-  const setTarget = (req: Requirement, track: Track, env: BuildEnv) => {
-    update(req.id, track === 'weizan' ? { targetWeizan: env } : { targetStar: env });
-  };
-
-  return { getTarget, getBuildOther, setTarget };
+  return { getTarget, getBuildOther };
 }
