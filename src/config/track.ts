@@ -3,7 +3,7 @@
  * - 微赞轨：dev → test → pre → master（master = 微赞已上线）
  * - 星享轨：preb-txnj → pre-txnj → prod-txnj（prod-txnj = 星享已上线）
  * - 一个需求两条轨并行推进，状态由轨阶段派生（每轨 + 整体粗粒度），不再手工维护状态枚举。
- * - 旧数据迁移：单 currentEnv / 旧 status 枚举按环境所属集群拆到对应轨。
+ * - 本文件为纯派生函数，不含任何旧数据兼容逻辑（旧格式转换统一在 utils/legacyImport.ts）。
  */
 import type { BuildEnv } from '../build';
 import type { OverallStatus, Requirement, Track } from '../types';
@@ -138,85 +138,4 @@ export function overallStatus(req: Requirement): OverallStatus {
   if (onlineCount > 0) return '部分上线';
   const allAtFirst = tracks.every((t) => trackStageIndex(t, trackEnvOf(req, t)) === 0);
   return allAtFirst ? '开发中' : '进行中';
-}
-
-/* ---------- 旧数据迁移 ---------- */
-
-/** 历史状态枚举 → 环境映射（覆盖两代旧枚举：9 态与 10 态） */
-const LEGACY_STATUS_TO_ENV: Record<string, BuildEnv> = {
-  开发中: 'dev',
-  已提测: 'test',
-  测试中: 'test',
-  测试通过: 'test',
-  验收通过: 'test',
-  预发布测试中: 'pre-txnj',
-  'preb-txnj测试中': 'preb-txnj',
-  'preb-txnj测试通过': 'preb-txnj',
-  'pre-txnj测试中': 'pre-txnj',
-  'pre-txnj测试通过': 'pre-txnj',
-  待发布: 'pre',
-  pre测试中: 'pre',
-  pre测试通过: 'pre',
-  线上验证中: 'pre',
-  已发布: 'master',
-};
-
-/**
- * 老数据迁移：把旧单流水线字段拆到双轨（一次性全量处理，由 useWorkTracker 的一次性标记触发）：
- * - 旧 currentEnv（若属于某轨）→ 该轨阶段；未命中时按旧 status 反推；
- * - 旧 status「已发布」→ 两条轨都置末段（微赞 master + 星享 prod-txnj）；
- * - 旧 versionPipeline：starOnly → 移除微赞轨（不显示）；weizanOnly → 移除星享轨；
- * - version 缺失 → '大版'；清理 versionPipeline / currentEnv / buildEnv 旧键。
- * 注意：轨字段为 undefined 表示「该轨已被用户移除」，本函数只在一次性迁移时执行，
- * 正常运行不会把用户移除的轨恢复出来。
- * @returns 补齐后的需求与是否发生变化
- */
-export function backfillRequirement(req: Requirement): { next: Requirement; changed: boolean } {
-  const legacy = req as Requirement & {
-    versionPipeline?: string;
-    currentEnv?: string | null;
-    buildEnv?: string;
-  };
-  const hasLegacyKeys =
-    legacy.versionPipeline !== undefined ||
-    legacy.currentEnv !== undefined ||
-    legacy.buildEnv !== undefined;
-  if (!hasLegacyKeys && req.version !== undefined && req.envWeizan !== undefined && req.envStar !== undefined) {
-    return { next: req, changed: false };
-  }
-
-  const next = { ...legacy };
-  // 1) 拆轨：旧 currentEnv 优先，未命中按旧 status 反推
-  let envWeizan: BuildEnv | null | undefined = req.envWeizan ?? null;
-  let envStar: BuildEnv | null | undefined = req.envStar ?? null;
-  if (legacy.currentEnv != null) {
-    const track = trackOfEnv(legacy.currentEnv);
-    if (track === 'weizan') envWeizan = legacy.currentEnv;
-    else if (track === 'star') envStar = legacy.currentEnv;
-  }
-  if (envWeizan === null && envStar === null && req.status) {
-    if (req.status === '已发布') {
-      // 已发布 = 两条轨都到末段
-      envWeizan = trackFinalEnv('weizan');
-      envStar = trackFinalEnv('star');
-    } else {
-      const env = LEGACY_STATUS_TO_ENV[req.status];
-      if (env) {
-        if (trackOfEnv(env) === 'weizan') envWeizan = env;
-        else envStar = env;
-      }
-    }
-  }
-  // 2) 旧流水线类型决定不参与的轨（undefined = 该轨已移除，卡片不显示）
-  if (legacy.versionPipeline === 'starOnly') envWeizan = undefined;
-  else if (legacy.versionPipeline === 'weizanOnly') envStar = undefined;
-  next.envWeizan = envWeizan;
-  next.envStar = envStar;
-  // 3) 版本标签缺失归大版
-  next.version = req.version ?? '大版';
-  // 4) 清理旧键
-  delete next.versionPipeline;
-  delete next.currentEnv;
-  delete next.buildEnv;
-  return { next, changed: true };
 }

@@ -43,7 +43,7 @@ function loadState(): QuickBuildState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<QuickBuildState> & { projects?: unknown };
+    const parsed = JSON.parse(raw) as Partial<QuickBuildState>;
     const batches = Array.isArray(parsed.batches)
       ? parsed.batches.filter(
           (b): b is QuickBatch =>
@@ -51,13 +51,6 @@ function loadState(): QuickBuildState | null {
             b.projects.every((p) => typeof p === 'string'),
         )
       : [];
-    // 旧版扁平 projects 列表迁移为第一个批次，刷新不丢已收集内容
-    if (batches.length === 0 && Array.isArray(parsed.projects)) {
-      const legacy = parsed.projects.filter((p): p is string => typeof p === 'string' && p.length > 0);
-      if (legacy.length > 0) {
-        batches.push({ id: `qb-legacy`, createdAt: '历史录入', projects: legacy, excluded: false });
-      }
-    }
     return {
       batches,
       env: typeof parsed.env === 'string' ? parsed.env : '',

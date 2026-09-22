@@ -1,16 +1,17 @@
 import { useMemo, useState } from 'react';
-import { App as AntdApp, Badge, Button, Card, Empty, Space, Switch, Typography, Upload } from 'antd';
+import { Alert, App as AntdApp, Badge, Button, Card, Empty, Space, Switch, Typography, Upload } from 'antd';
 import {
   BarChartOutlined,
   ImportOutlined,
   PlusOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import type { Requirement, Track } from '../types';
-import { downloadJson, buildExportPayload, exportAll, findOlderThanOneMonth, parseImportFile } from '../export';
+import type { Requirement, RequirementInput, Track } from '../types';
+import { exportAll, exportArchive, exportLegacyRaw, findOlderThanOneMonth } from '../export';
+import { hasLegacyData, parseImportFile } from '../utils/legacyImport';
 import { useDevopsApps, useBuildPlan, useRequirements } from '../hooks/useWorkTracker';
 import { ALL_ENVS, TRACK_LABELS, overallStatus, trackEnvOf } from '../config/track';
-import RequirementForm, { type RequirementFormValues } from '../components/RequirementForm';
+import RequirementForm from '../components/RequirementForm';
 import RequirementCardGrid from '../components/RequirementCardGrid';
 import BuildPanel from '../components/BuildPanel';
 import BatchPanel from '../components/BatchPanel';
@@ -20,7 +21,10 @@ import FilterBar, { type FilterValue } from '../components/FilterBar';
 import { useBuildTasks, startBuildTask } from '../hooks/useBuildTasks';
 import { getCsrfToken, buildMergeRequestUrl, type BuildEnv } from '../build';
 import { getBatchItems, type BuildTarget, type MrSkipped, type MrTarget } from '../batch';
-import { openInNewTab } from '../utils/openTabs';
+import { openManyTabs } from '../utils/openTabs';
+
+/** 单次打开 MR 标签页的确认阈值：超过此数量先二次确认，避免一次开过多标签页 */
+const MR_OPEN_CONFIRM_THRESHOLD = 10;
 
 const INITIAL_FILTER: FilterValue = {
   project: undefined,
@@ -58,6 +62,9 @@ export default function RequirementListPage() {
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>(INITIAL_FILTER);
+  // 旧版数据提示条：仅提示用户走「导出旧数据 → 导入数据」闭环，不自动改动数据；关闭后不再打扰
+  const [legacyNoticeClosed, setLegacyNoticeClosed] = useState(false);
+  const legacyDataDetected = useMemo(() => hasLegacyData(requirements), [requirements]);
 
   // 批量选择状态：卡片勾选 + 面板 X 的临时排除
   const [selectedReqIds, setSelectedReqIds] = useState<Set<string>>(new Set());
@@ -115,8 +122,6 @@ export default function RequirementListPage() {
     () => requirements.filter((r) => selectedReqIds.has(r.id)),
     [requirements, selectedReqIds],
   );
-
-  /** 老数据已在加载时一次性静默迁移（useWorkTracker → migrateToDualTrackOnce），无需按钮 */
 
   /** 设置某轨当前环境（卡片环境 Select 入口；构建/MR 都作用于该环境）：
    *  切换环境时重置该轨「测试通过」标记（新环境尚未测试）。 */
@@ -191,12 +196,47 @@ export default function RequirementListPage() {
     }
   };
 
+  /**
+   * 统一打开 MR 标签页（卡片单轨 / 批量两个入口共用）：
+   * 超过阈值先二次确认（确认按钮本身即一次新的用户手势），确认后在同一同步调用栈内全部发起打开。
+   * 提示语如实说明"已发起"——锚点方式无法回传是否真的弹出，只提示用户可走 MR 清单兜底。
+   * @param urls 待打开链接（须在用户手势的同步调用栈内调用）
+   * @param scopeLabel 提示语后缀（如「（微赞 → test）」）
+   */
+  const openMrTabs = (urls: string[], scopeLabel: string) => {
+    if (urls.length === 0) return;
+    const run = () => {
+      openManyTabs(urls);
+      message.success(
+        <div>
+          <div>
+            已发起打开 {urls.length} 个 MR 页面{scopeLabel}
+          </div>
+          {urls.length > 1 ? (
+            <div style={{ fontSize: 12, color: '#888' }}>若浏览器只放行了一个标签页，可到 MR 清单逐条打开</div>
+          ) : null}
+        </div>,
+      );
+    };
+    if (urls.length > MR_OPEN_CONFIRM_THRESHOLD) {
+      modal.confirm({
+        title: '确认打开大量标签页？',
+        content: `本次将打开 ${urls.length} 个 MR 页面，可能占用较多内存。`,
+        okText: '继续打开',
+        cancelText: '取消',
+        onOk: run,
+      });
+      return;
+    }
+    run();
+  };
+
   /** 某轨提交 MR（卡片）：打开该需求全部项目到该轨当前环境的 GitLab 预填 MR 链接 */
   const handleTrackMr = (req: Requirement, track: Track) => {
     const env = buildPlan.getTarget(req, track);
     const items = getBatchItems(req, {});
     const skipped: string[] = [];
-    let opened = 0;
+    const urls: string[] = [];
     for (const it of items) {
       const gitUrl = devopsApps.apps.find((a) => a.app === it.project)?.gitUrl;
       if (!gitUrl) {
@@ -207,13 +247,9 @@ export default function RequirementListPage() {
         skipped.push(`【${it.project}】未填写开发分支`);
         continue;
       }
-      // <a> 模拟点击打开：绕过浏览器对连续 window.open 的弹窗拦截，可全部打开
-      openInNewTab(buildMergeRequestUrl(gitUrl, it.branch, env));
-      opened += 1;
+      urls.push(buildMergeRequestUrl(gitUrl, it.branch, env));
     }
-    if (opened > 0) {
-      message.success(`已打开 ${opened} 个 MR 页面（${TRACK_LABELS[track]} → ${env}）`);
-    }
+    openMrTabs(urls, `（${TRACK_LABELS[track]} → ${env}）`);
     if (skipped.length > 0) {
       message.warning(`已跳过：${skipped.join('；')}`);
     }
@@ -271,12 +307,12 @@ export default function RequirementListPage() {
     setBatchExcluded({});
   };
 
-  /** 批量 MR：全量打开 GitLab 预填页（<a> 模拟点击，不受弹窗拦截限制） */
+  /** 批量 MR：打开全部 GitLab 预填页（超阈值先二次确认，按真实结果如实提示） */
   const handleBatchMr = (targets: MrTarget[], skipped: MrSkipped[]) => {
-    targets.forEach((t) => openInNewTab(t.url));
-    if (targets.length > 0) {
-      message.success(`已打开 ${targets.length} 个 MR 页面`);
-    }
+    openMrTabs(
+      targets.map((t) => t.url),
+      '',
+    );
     if (skipped.length > 0) {
       message.warning(`已跳过 ${skipped.length} 项：${skipped.map((s) => `【${s.project}】${s.reason}`).join('；')}`);
     }
@@ -343,7 +379,7 @@ export default function RequirementListPage() {
     setEditing(null);
   };
 
-  const handleSubmit = (values: RequirementFormValues) => {
+  const handleSubmit = (values: RequirementInput) => {
     const isEdit = upsert(editing?.id ?? null, values);
     message.success(isEdit ? '已保存' : '登记成功');
     closeForm();
@@ -375,6 +411,18 @@ export default function RequirementListPage() {
     message.success('已导出全部数据');
   };
 
+  /**
+   * 导出旧数据：把浏览器中现存的 requirements 原始字符串原样打包（不做任何转换）。
+   * 供旧版环境逃生——拿到文件后经「导入数据（兼容旧版）」自动转换为当前格式。
+   */
+  const handleExportLegacy = () => {
+    if (!exportLegacyRaw()) {
+      message.info('浏览器中暂无可导出的需求数据');
+      return;
+    }
+    message.success('已导出浏览器中现存的原始需求数据');
+  };
+
   const handleExportAndClean = () => {
     const targets = findOlderThanOneMonth(requirements);
     if (targets.length === 0) {
@@ -388,7 +436,7 @@ export default function RequirementListPage() {
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: () => {
-        downloadJson(buildExportPayload('archive', targets));
+        exportArchive(targets);
         removeMany(new Set(targets.map((r) => r.id)));
         message.success(`已导出并清理 ${targets.length} 条数据`);
       },
@@ -445,6 +493,20 @@ export default function RequirementListPage() {
     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
       {/* 左：主内容卡片（随内容区整体滚动） */}
       <Card style={{ flex: 1, minWidth: 0 }}>
+        {/* 旧版数据提示：仅指引闭环，不自动改动数据；关闭后不再打扰 */}
+        {legacyDataDetected && !legacyNoticeClosed ? (
+          <Alert
+            type="warning"
+            showIcon
+            closable
+            onClose={() => setLegacyNoticeClosed(true)}
+            message="检测到旧版格式的需求数据"
+            description="请先点「导出旧数据」保存原文件，再用「导入数据（兼容旧版）」导入，即可自动转换为当前格式后继续使用。"
+            style={{ marginBottom: 16 }}
+            data-testid="legacy-data-alert"
+          />
+        ) : null}
+
         {/* 标题行：登记/导入导出/构建任务 */}
         <div
           style={{
@@ -468,8 +530,13 @@ export default function RequirementListPage() {
                 return false;
               }}
             >
-              <Button icon={<ImportOutlined />}>导入数据</Button>
+              <Button icon={<ImportOutlined />} data-testid="import-data-button">
+                导入数据（兼容旧版）
+              </Button>
             </Upload>
+            <Button onClick={handleExportLegacy} data-testid="export-legacy-data-button">
+              导出旧数据
+            </Button>
             <Button onClick={handleExportAll}>导出数据</Button>
             <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>
             <Badge count={activeCount} size="small" offset={[-2, 2]}>

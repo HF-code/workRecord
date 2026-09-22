@@ -1,62 +1,20 @@
 import { useEffect, useState } from 'react';
-import type { Requirement, Track } from '../types';
+import type { Requirement, RequirementInput, Track } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import type { BranchConfig } from '../config/branches';
 import { DEFAULT_BRANCHES } from '../config/branches';
 import type { BuildEnv } from '../build';
-import { backfillRequirement, trackBuildEnv } from '../config/track';
+import { trackBuildEnv } from '../config/track';
 import {
   loadBranches,
   loadDevopsApps,
   loadDevopsSyncedAt,
   loadRequirements,
-  migrateDevopsAppsExcludeFlag,
-  migrateLegacyBuildPlan,
   saveBranches,
   saveDevopsApps,
   saveDevopsSyncedAt,
   saveRequirements,
 } from '../storage';
-import type { RequirementFormValues } from '../components/RequirementForm';
-
-/** 一次性双轨迁移标记 key（迁移完成后写入，此后不再执行，避免覆盖用户手动移除的轨） */
-const DUAL_TRACK_MIGRATED_KEY = 'work-tracker:dual-track:migrated:v1';
-
-/** 一次性迁移：把旧单流水线数据拆到双轨（首启执行；幂等，完成后打标记） */
-function migrateToDualTrackOnce(): void {
-  try {
-    if (localStorage.getItem(DUAL_TRACK_MIGRATED_KEY)) return;
-    const list = loadRequirements();
-    const results = list.map(backfillRequirement);
-    if (results.some((r) => r.changed)) {
-      saveRequirements(results.map((r) => r.next));
-    }
-    localStorage.setItem(DUAL_TRACK_MIGRATED_KEY, '1');
-  } catch {
-    // 迁移失败不影响主流程
-  }
-}
-
-/** 一次性清理标记 key：移除已废弃的每轨「目标环境」字段 */
-const LEGACY_TARGET_STRIPPED_KEY = 'work-tracker:dual-track:strip-targets:v1';
-
-/** 一次性清理：删除旧数据的 targetWeizan/targetStar（构建/MR 已改为直接取当前环境） */
-function stripLegacyTrackTargetsOnce(): void {
-  try {
-    if (localStorage.getItem(LEGACY_TARGET_STRIPPED_KEY)) return;
-    const list = loadRequirements();
-    const next = list.map((r) => {
-      const copy = { ...r } as Requirement & { targetWeizan?: unknown; targetStar?: unknown };
-      delete copy.targetWeizan;
-      delete copy.targetStar;
-      return copy;
-    });
-    saveRequirements(next);
-    localStorage.setItem(LEGACY_TARGET_STRIPPED_KEY, '1');
-  } catch {
-    // 清理失败不影响主流程
-  }
-}
 
 /** 生成 UUID，兼容不支持 crypto.randomUUID 的环境（如 file:// 或非安全上下文） */
 function genId(): string {
@@ -70,15 +28,13 @@ function genId(): string {
   });
 }
 
+/**
+ * 需求数据读写（唯一数据源）。
+ * 内存与 localStorage 中只存在 types.ts 定义的唯一格式——不在此做任何旧格式兼容，
+ * 旧数据统一经「导入数据」由 utils/legacyImport.ts 转换后进入。
+ */
 export function useRequirements() {
-  const [requirements, setRequirements] = useState<Requirement[]>(() => {
-    migrateLegacyBuildPlan();
-    // 一次性静默迁移：旧单流水线数据拆到双轨（含旧流水线类型决定隐藏哪条轨）
-    migrateToDualTrackOnce();
-    // 一次性静默清理：删除已废弃的每轨「目标环境」字段
-    stripLegacyTrackTargetsOnce();
-    return loadRequirements();
-  });
+  const [requirements, setRequirements] = useState<Requirement[]>(() => loadRequirements());
 
   useEffect(() => {
     saveRequirements(requirements);
@@ -91,25 +47,28 @@ export function useRequirements() {
   };
 
   /** 新增或保存编辑，返回是否为编辑 */
-  const upsert = (editingId: string | null, values: RequirementFormValues): boolean => {
+  const upsert = (editingId: string | null, values: RequirementInput): boolean => {
     const items = values.items.map((it) => ({
       id: it.id ?? genId(),
       project: it.project,
       branch: it.branch,
     }));
     if (editingId) {
-      const existing = requirements.find((r) => r.id === editingId);
-      update(editingId, {
-        ...values,
-        items,
-        buildItems: existing?.buildItems,
-      });
+      update(editingId, { ...values, items });
       return true;
     }
     const now = new Date().toISOString();
     setRequirements((list) => [
       // 新需求默认双轨可见（未开始态），用户可在卡片上 X 掉不参与的轨
-      { id: genId(), ...values, items, envWeizan: null, envStar: null, createdAt: now, updatedAt: now },
+      {
+        id: genId(),
+        ...values,
+        items,
+        envWeizan: null,
+        envStar: null,
+        createdAt: now,
+        updatedAt: now,
+      },
       ...list,
     ]);
     return false;
@@ -147,11 +106,7 @@ export function useRequirements() {
 }
 
 export function useDevopsApps() {
-  const [apps, setApps] = useState<DevopsApp[]>(() => {
-    // 一次性迁移：本地已存数据补 vzanlive_weapp 的不参与构建标记（幂等）
-    migrateDevopsAppsExcludeFlag();
-    return loadDevopsApps();
-  });
+  const [apps, setApps] = useState<DevopsApp[]>(() => loadDevopsApps());
   const [syncedAt, setSyncedAt] = useState<string | null>(() => loadDevopsSyncedAt());
 
   useEffect(() => {

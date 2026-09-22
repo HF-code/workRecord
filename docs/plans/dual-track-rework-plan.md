@@ -51,6 +51,9 @@
 
 ## 数据迁移
 
+> ⚠️ **已废止**（2026-09-21）：本节描述的「一次性静默迁移」已全部删除，改为「运行时零兼容 + 旧数据只在导入边界转换」。
+> 见 `bugfix-requirement-form-and-mr-tabs-plan.md`。下面保留原文仅作历史记录。
+
 - **一次性静默迁移**（无按钮）：首次加载时执行（`work-tracker:dual-track:migrated:v1` 标记，此后不再执行，
   避免覆盖用户手动移除的轨）：currentEnv/旧 status → 按集群拆轨；旧「已发布」→ 两轨都置末段；
   旧 versionPipeline：starOnly → 移除微赞轨、weizanOnly → 移除星享轨；version 缺失归大版；

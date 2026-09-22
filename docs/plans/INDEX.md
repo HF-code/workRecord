@@ -13,6 +13,7 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | `plans/dual-track-rework-plan.md` | **双轨环境模型（当前架构权威说明）**：微赞轨/星享轨并行推进、派生状态、按轨构建/MR、一次性迁移 | ✅已落地 |
+| `plans/bugfix-requirement-form-and-mr-tabs-plan.md` | **数据来源单点化（当前权威说明）**：表单 items 受控重构（修「编辑后分支丢失」）、MR 多标签页打开（修「只开一个」）、运行时零旧数据兼容 + 旧数据只在导入边界转换 + 旧版数据逃生闭环 | ✅已落地 |
 | `build-cross-origin-plan.md` | 跨域构建方案：Vite proxy + mywork-server(Koa2) 转发 `/devops-api`，登录 cookie 落在本地服务域 | ✅已落地 |
 | `plans/dingtalk-build-phase1-dev-plan.md` | 钉钉构建桥 · 阶段一实施清单：账号绑定、`/构建` 命令、制品回推（现走钉钉 Stream 模式） | ✅已落地 |
 | `dingtalk-local-debug.md` | 钉钉构建桥 · 本地调试手册（"外接钉钉"设置、服务启动、常见问题） | 🔧使用手册 |

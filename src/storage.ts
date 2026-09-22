@@ -5,7 +5,7 @@ import { normalizePollInterval } from './config/buildConfig';
 
 /* ---------- localStorage 存储键定义（按业务数据分类） ---------- */
 
-/** 需求列表：Requirement[]，包含需求基础信息与双轨环境（微赞/星享当前环境、测试通过标记等） */
+/** 需求列表：Requirement[]（types.ts 定义的唯一格式；旧格式只在导入边界转换，不在此兼容） */
 const REQ_KEY = 'work-tracker:requirements:v1';
 /** 运维平台应用配置：DevopsApp[]，项目名/别名/分组/gitUrl/是否参与构建，缺失时回退 DEFAULT_DEVOPS_APPS */
 const DEVOPS_APPS_KEY = 'work-tracker:devops-apps:v1';
@@ -36,6 +36,19 @@ function saveJson(key: string, value: unknown): void {
 
 export function loadRequirements(): Requirement[] {
   return loadJson<Requirement[]>(REQ_KEY, []);
+}
+
+/**
+ * 读取需求数据的**原始字符串**（不做任何解析与转换）。
+ * 供「导出旧数据」使用：原样搬运，即使内容已损坏也能完整取回。
+ * @returns 未存储时返回 null
+ */
+export function loadRequirementsRaw(): string | null {
+  try {
+    return localStorage.getItem(REQ_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export function saveRequirements(list: Requirement[]): void {
@@ -102,50 +115,5 @@ export function saveAutoBuildOnFail(on: boolean): void {
     localStorage.setItem(AUTO_BUILD_ON_FAIL_KEY, on ? '1' : '0');
   } catch {
     // 静默处理
-  }
-}
-
-/** 一次性迁移：本地已存的项目数据中 vzanlive_weapp 未标记「不参与构建」时补上（幂等）。
- *  未存过（走默认数据）无需处理——默认数据已含标记。 */
-export function migrateDevopsAppsExcludeFlag(): void {
-  try {
-    const raw = localStorage.getItem(DEVOPS_APPS_KEY);
-    if (!raw) return;
-    const list = JSON.parse(raw) as Array<{ app?: unknown; excludeFromBuild?: unknown }>;
-    if (!Array.isArray(list)) return;
-    let changed = false;
-    const next = list.map((a) => {
-      if (a && typeof a === 'object' && a.app === 'vzanlive_weapp' && a.excludeFromBuild === undefined) {
-        changed = true;
-        return { ...a, excludeFromBuild: true };
-      }
-      return a;
-    });
-    if (changed) localStorage.setItem(DEVOPS_APPS_KEY, JSON.stringify(next));
-  } catch {
-    // 迁移失败不影响主流程
-  }
-}
-
-/** 一次性迁移：将旧版本独立存储的勾选项并回 requirements（同表），并清理旧 key。
- *  旧「构建目标分支」已废弃（构建/MR 现在直接取轨当前环境），随迁移一并丢弃。 */
-export function migrateLegacyBuildPlan(): void {
-  const LEGACY_ENVS_KEY = 'work-tracker:build-envs:v1';
-  const LEGACY_SELECTED_KEY = 'work-tracker:build-selected:v1';
-  try {
-    const rawEnvs = localStorage.getItem(LEGACY_ENVS_KEY);
-    const rawSelected = localStorage.getItem(LEGACY_SELECTED_KEY);
-    if (!rawEnvs && !rawSelected) return;
-    const selected = rawSelected ? (JSON.parse(rawSelected) as Record<string, string[]>) : {};
-    const list = loadRequirements();
-    const next = list.map((r) => ({
-      ...r,
-      buildItems: (selected[r.id] as string[] | undefined) ?? r.buildItems,
-    }));
-    saveRequirements(next);
-    localStorage.removeItem(LEGACY_ENVS_KEY);
-    localStorage.removeItem(LEGACY_SELECTED_KEY);
-  } catch {
-    // 迁移失败不影响主流程
   }
 }

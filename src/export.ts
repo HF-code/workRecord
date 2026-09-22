@@ -1,11 +1,48 @@
+/**
+ * 数据导出（与清理辅助）。
+ *
+ * 导出两种产物：
+ * - 「导出数据」：当前唯一格式（version: 2），供备份与跨设备搬运；
+ * - 「导出旧数据」：把浏览器中现存的 requirements **原始字符串**原样打包（version: 'legacy-raw'），
+ *   不做任何解析——即使内容已损坏或仍是旧格式也能完整取回，用于旧版数据逃生。
+ *
+ * 导入解析（含旧格式转换）不在此文件，统一收口到 utils/legacyImport.ts。
+ */
 import dayjs from 'dayjs';
-import { VERSIONS, type ProjectBranch, type Requirement } from './types';
+import { loadRequirementsRaw } from './storage';
+import { LEGACY_RAW_VERSION } from './utils/legacyImport';
+import type { Requirement } from './types';
+
+/** 当前唯一格式的导出载荷版本 */
+export const EXPORT_VERSION = 2;
 
 export interface ExportPayload {
-  version: 1;
+  version: typeof EXPORT_VERSION;
   exportedAt: string;
   type: 'all' | 'archive';
   requirements: Requirement[];
+}
+
+/** 「导出旧数据」载荷：原样保留 localStorage 原始字符串 */
+export interface LegacyRawPayload {
+  version: typeof LEGACY_RAW_VERSION;
+  exportedAt: string;
+  raw: string;
+}
+
+function downloadJson(payload: ExportPayload | LegacyRawPayload): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const label = payload.version === EXPORT_VERSION ? payload.type : LEGACY_RAW_VERSION;
+  a.download = `work-tracker-${label}-${dayjs().format('YYYYMMDD-HHmm')}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 export function buildExportPayload(
@@ -13,25 +50,11 @@ export function buildExportPayload(
   requirements: Requirement[],
 ): ExportPayload {
   return {
-    version: 1,
+    version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     type,
     requirements,
   };
-}
-
-export function downloadJson(payload: ExportPayload): void {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json',
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `work-tracker-${payload.type}-${dayjs().format('YYYYMMDD-HHmm')}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 /** 找出「发版时间在一个月以前」的需求（releaseDate 为空的永不清理） */
@@ -44,80 +67,19 @@ export function exportAll(list: Requirement[]): void {
   downloadJson(buildExportPayload('all', list));
 }
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function isValidItem(v: unknown): v is ProjectBranch {
-  if (typeof v !== 'object' || v === null) return false;
-  const it = v as Record<string, unknown>;
-  return (
-    typeof it.id === 'string' &&
-    typeof it.project === 'string' &&
-    typeof it.branch === 'string' &&
-    it.branch.trim() !== ''
-  );
+/** 归档导出：把待清理的数据单独打包下载（「导出并清理」的导出环节，先导出再删除） */
+export function exportArchive(list: Requirement[]): void {
+  downloadJson(buildExportPayload('archive', list));
 }
 
-/** 双轨环境字段校验：undefined（未迁移）或 null（未开始）或任意非空字符串（宽松，未知环境构建命令回退环境本身） */
-function isValidTrackEnv(v: unknown): boolean {
-  return v === undefined || v === null || (typeof v === 'string' && v.trim() !== '');
-}
-
-function isValidRequirement(v: unknown): v is Requirement {
-  if (typeof v !== 'object' || v === null) return false;
-  const r = v as Record<string, unknown>;
-  const validBuildItems =
-    r.buildItems === undefined ||
-    (Array.isArray(r.buildItems) && r.buildItems.every((x) => typeof x === 'string'));
-  return (
-    typeof r.id === 'string' &&
-    typeof r.name === 'string' &&
-    r.name.trim() !== '' &&
-    typeof r.tapdUrl === 'string' &&
-    /^https?:\/\//.test(r.tapdUrl) &&
-    Array.isArray(r.items) &&
-    r.items.every(isValidItem) &&
-    (r.releaseDate === null || (typeof r.releaseDate === 'string' && DATE_RE.test(r.releaseDate))) &&
-    (r.remark === undefined || typeof r.remark === 'string') &&
-    (r.version === undefined || (typeof r.version === 'string' && (VERSIONS as readonly string[]).includes(r.version))) &&
-    isValidTrackEnv(r.envWeizan) &&
-    isValidTrackEnv(r.envStar) &&
-    (r.testPassWeizan === undefined || typeof r.testPassWeizan === 'boolean') &&
-    (r.testPassStar === undefined || typeof r.testPassStar === 'boolean') &&
-    validBuildItems
-  );
-}
-
-export interface ImportResult {
-  requirements: Requirement[];
-  /** 文件中格式非法被丢弃的条数 */
-  invalidCount: number;
-}
-
-/** 解析导入文件，失败时抛错（JSON 损坏 / 不是本系统导出格式） */
-export function parseImportFile(text: string): ImportResult {
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error('文件不是合法的 JSON');
-  }
-  const payload = data as Partial<ExportPayload>;
-  if (payload?.version !== 1 || !Array.isArray(payload.requirements)) {
-    throw new Error('文件格式不正确，请使用本系统导出的 JSON 文件');
-  }
-  const now = new Date().toISOString();
-  const valid: Requirement[] = [];
-  let invalidCount = 0;
-  for (const raw of payload.requirements as unknown[]) {
-    if (isValidRequirement(raw)) {
-      valid.push({
-        ...raw,
-        createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
-        updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : now,
-      });
-    } else {
-      invalidCount += 1;
-    }
-  }
-  return { requirements: valid, invalidCount };
+/**
+ * 导出旧数据：原样打包浏览器中现存的 requirements 字符串，不做任何转换。
+ * 用于旧版环境逃生——拿到文件后经「导入数据」自动转换为新格式。
+ * @returns 浏览器中无需求数据（从未存储）时返回 false
+ */
+export function exportLegacyRaw(): boolean {
+  const raw = loadRequirementsRaw();
+  if (raw === null) return false;
+  downloadJson({ version: LEGACY_RAW_VERSION, exportedAt: new Date().toISOString(), raw });
+  return true;
 }
