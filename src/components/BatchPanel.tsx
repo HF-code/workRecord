@@ -3,7 +3,7 @@
  * - 上半：统计（N 需求 · M 项目 · K 构建任务 · S 跳过）+ 构建/MR 两个并排清单 + 批量按钮；
  *   构建清单带一键复制（逐行 `项目名【环境】`）；MR 清单每项为可点链接（明细核对/手动单开）。
  * - 下半：每个选中需求一个小框，项目 + 分支为可关闭 Tag（X = 本次批量排除，不动需求数据）。
- * 构建/MR 覆盖全部项目：不受项目配置「不参与构建」影响（代码都要合）。
+ * 范围口径：**构建**按项目配置剔除「不参与构建」的项目；**MR** 不受该配置影响（覆盖全部项目）。
  * 配色为黑白色调：浅灰面板 + 白色清单卡；仅"N 项将跳过"保留橙色警示。
  */
 import { useMemo } from 'react';
@@ -12,9 +12,11 @@ import { CopyOutlined } from '@ant-design/icons';
 import type { Requirement } from '../types';
 import type { DevopsApp } from '../config/devopsApps';
 import {
+  collectBuildExcludedProjects,
   collectBuildTargets,
   collectMrTargets,
-  getBatchItems,
+  getMrItems,
+  isBuildExcluded,
   summarize,
   type BuildPlan,
   type BuildTarget,
@@ -103,12 +105,17 @@ export default function BatchPanel({
     [reqs, apps, buildPlan, excluded],
   );
   const { builds, dupCount } = useMemo(
-    () => collectBuildTargets(reqs, buildPlan, excluded),
-    [reqs, buildPlan, excluded],
+    () => collectBuildTargets(reqs, apps, buildPlan, excluded),
+    [reqs, apps, buildPlan, excluded],
   );
   const summary = useMemo(
-    () => summarize(reqs, buildPlan, excluded, skipped.length),
-    [reqs, buildPlan, excluded, skipped.length],
+    () => summarize(reqs, apps, buildPlan, excluded, skipped.length),
+    [reqs, apps, buildPlan, excluded, skipped.length],
+  );
+  /** 被项目配置「不参与构建」而排除出构建范围的项目名（MR 不受影响，仍会覆盖） */
+  const buildExcludedProjects = useMemo(
+    () => collectBuildExcludedProjects(reqs, apps, excluded),
+    [reqs, apps, excluded],
   );
 
   if (reqs.length === 0) return null;
@@ -155,6 +162,15 @@ export default function BatchPanel({
               （合并去重 {dupCount} 个重复构建）
             </span>
           ) : null}
+          {buildExcludedProjects.length > 0 ? (
+            <Tooltip
+              title={`已按项目配置从构建范围剔除：${buildExcludedProjects.join('、')}（提交 MR 不受影响，仍覆盖这些项目）`}
+            >
+              <span style={{ color: '#888', marginLeft: 8, fontWeight: 400 }}>
+                （{buildExcludedProjects.length} 个项目不参与构建）
+              </span>
+            </Tooltip>
+          ) : null}
         </Typography.Text>
         <Space>
           <Button
@@ -192,7 +208,9 @@ export default function BatchPanel({
         >
           {builds.length === 0 ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              无构建项
+              {buildExcludedProjects.length > 0
+                ? `无构建项（${buildExcludedProjects.length} 个项目配置为不参与构建）`
+                : '无构建项'}
             </Typography.Text>
           ) : (
             builds.map((b) => (
@@ -238,10 +256,11 @@ export default function BatchPanel({
       {/* 制品清单：与全局构建任务同源，构建完成后自动回查展示 file_url */}
       <ArtifactList />
 
-      {/* 下半：逐需求小框——项目可 X 临时排除（本次批量生效，不动需求数据） */}
+      {/* 下半：逐需求小框——项目可 X 临时排除（本次批量生效，不动需求数据）
+          列的是 MR/展示口径（含「不参与构建」项目，仅标注），构建清单已单独剔除 */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {reqs.map((req) => {
-          const items = getBatchItems(req, excluded);
+          const items = getMrItems(req, excluded);
           return (
             <div
               key={req.id}
@@ -268,20 +287,32 @@ export default function BatchPanel({
                 {items.length === 0 ? (
                   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无" style={{ margin: 0 }} />
                 ) : (
-                  items.map((it) => (
-                    <Tag
-                      key={it.id}
-                      closable
-                      onClose={(e) => {
-                        // 阻止默认隐藏，由状态驱动（页面层会同步联动卡片勾选）
-                        e.preventDefault();
-                        onRemoveItem(req.id, it.id);
-                      }}
-                      style={{ marginInlineEnd: 0, fontSize: 12 }}
-                    >
-                      {it.project} {it.branch}
-                    </Tag>
-                  ))
+                  items.map((it) => {
+                    const noBuild = isBuildExcluded(it.project, apps);
+                    return (
+                      <Tooltip
+                        key={it.id}
+                        title={
+                          noBuild
+                            ? '该项目配置为「不参与构建」：构建会跳过，提交 MR 仍会生成链接'
+                            : undefined
+                        }
+                      >
+                        <Tag
+                          closable
+                          onClose={(e) => {
+                            // 阻止默认隐藏，由状态驱动（页面层会同步联动卡片勾选）
+                            e.preventDefault();
+                            onRemoveItem(req.id, it.id);
+                          }}
+                          style={{ marginInlineEnd: 0, fontSize: 12, opacity: noBuild ? 0.55 : 1 }}
+                        >
+                          {it.project} {it.branch}
+                          {noBuild ? <span style={{ color: '#999' }}>（不构建）</span> : null}
+                        </Tag>
+                      </Tooltip>
+                    );
+                  })
                 )}
               </div>
             </div>

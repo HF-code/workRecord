@@ -20,7 +20,14 @@ import ProjectStatsModal from '../components/ProjectStatsModal';
 import FilterBar, { type FilterValue } from '../components/FilterBar';
 import { useBuildTasks, startBuildTask } from '../hooks/useBuildTasks';
 import { getCsrfToken, buildMergeRequestUrl, type BuildEnv } from '../build';
-import { getBatchItems, type BuildTarget, type MrSkipped, type MrTarget } from '../batch';
+import {
+  collectBuildExcludedProjects,
+  getBuildItems,
+  getMrItems,
+  type BuildTarget,
+  type MrSkipped,
+  type MrTarget,
+} from '../batch';
 import { openManyTabs } from '../utils/openTabs';
 
 /** 单次打开 MR 标签页的确认阈值：超过此数量先二次确认，避免一次开过多标签页 */
@@ -48,6 +55,7 @@ export default function RequirementListPage() {
     remove,
     removeMany,
     merge,
+    migrateLegacy,
   } = useRequirements();
   const devopsApps = useDevopsApps();
   const buildPlan = useBuildPlan();
@@ -153,15 +161,26 @@ export default function RequirementListPage() {
     message.info(`已移除${TRACK_LABELS[track]}轨，可在卡片上重新添加`);
   };
 
-  /** 某轨构建（卡片）：作用于该轨当前环境 × 该需求全部项目 */
+  /**
+   * 某轨构建（卡片）：作用于该轨当前环境 × 该需求**参与构建**的项目。
+   * 项目配置「不参与构建」（excludeFromBuild）继续生效——构建跳过这些项目，
+   * 仅「提交 MR」不受该配置影响（见 handleTrackMr）。
+   */
   const handleTrackBuild = async (req: Requirement, track: Track) => {
     if (!getCsrfToken()) {
       message.warning('未登录运维平台，请先登录后再构建');
       return;
     }
-    const items = getBatchItems(req, {});
-    if (items.length === 0) {
+    const items = getBuildItems(req, devopsApps.apps, {});
+    if (req.items.length === 0) {
       message.warning('该需求未登记项目');
+      return;
+    }
+    const skippedProjects = collectBuildExcludedProjects([req], devopsApps.apps, {});
+    if (items.length === 0) {
+      message.warning(
+        `该需求的项目均配置为「不参与构建」（${skippedProjects.join('、')}），如需构建请到项目配置页关闭开关`,
+      );
       return;
     }
     const env = buildPlan.getTarget(req, track);
@@ -191,7 +210,10 @@ export default function RequirementListPage() {
     }
     if (okCount > 0) {
       message.success(
-        `【${req.name}】${TRACK_LABELS[track]}轨已触发 ${okCount} 个项目构建（${env}）`,
+        `【${req.name}】${TRACK_LABELS[track]}轨已触发 ${okCount} 个项目构建（${env}）` +
+          (skippedProjects.length > 0
+            ? `；已跳过不参与构建的项目：${skippedProjects.join('、')}`
+            : ''),
       );
     }
   };
@@ -231,10 +253,13 @@ export default function RequirementListPage() {
     run();
   };
 
-  /** 某轨提交 MR（卡片）：打开该需求全部项目到该轨当前环境的 GitLab 预填 MR 链接 */
+  /**
+   * 某轨提交 MR（卡片）：打开该需求**全部项目**到该轨当前环境的 GitLab 预填 MR 链接。
+   * MR 不受项目配置「不参与构建」影响——只生成链接、不触发构建，代码都要合。
+   */
   const handleTrackMr = (req: Requirement, track: Track) => {
     const env = buildPlan.getTarget(req, track);
-    const items = getBatchItems(req, {});
+    const items = getMrItems(req, {});
     const skipped: string[] = [];
     const urls: string[] = [];
     for (const it of items) {
@@ -287,8 +312,9 @@ export default function RequirementListPage() {
     if (!req) return;
     setBatchExcluded((m) => {
       const next = { ...m, [reqId]: [...(m[reqId] ?? []), itemId] };
-      // 判断移除后该需求是否还有参与批量的项目
-      const remaining = getBatchItems(req, next).length;
+      // 判断移除后该需求是否还有参与批量的项目（用 MR 口径：它是两条链路的超集，
+      // 「不参与构建」的项目仍要出 MR，所以不算空）
+      const remaining = getMrItems(req, next).length;
       if (remaining === 0) {
         setSelectedReqIds((s) => {
           const sel = new Set(s);
@@ -318,12 +344,17 @@ export default function RequirementListPage() {
     }
   };
 
-  /** 批量构建：去重后逐个并入全局构建任务队列，汇总提示（reqIds 供小灯/进度回写） */
+  /**
+   * 批量构建：去重后逐个并入全局构建任务队列，汇总提示（reqIds 供小灯/进度回写）。
+   * builds 已由 BatchPanel 按项目配置剔除「不参与构建」项目（与 MR 口径不同）。
+   */
   const handleBatchBuild = async (builds: BuildTarget[], dupCount: number) => {
     if (!getCsrfToken()) {
       message.warning('未登录运维平台，请先登录后再构建');
       return;
     }
+    // 提示用：本次因「不参与构建」被跳过的项目（构建跳过，MR 仍覆盖）
+    const skippedByConfig = collectBuildExcludedProjects(selectedReqs, devopsApps.apps, batchExcluded);
     setBatchBuilding(true);
     try {
       // 任务名合并展示来源需求（如"需求A、需求B"），复用任务 store 的轮询/重试/取消
@@ -356,7 +387,11 @@ export default function RequirementListPage() {
       }
       if (okCount > 0) {
         message.success(
-          `已触发 ${okCount} 个构建${dupCount > 0 ? `（合并去重 ${dupCount} 个）` : ''}，右侧面板可看进度`,
+          `已触发 ${okCount} 个构建${dupCount > 0 ? `（合并去重 ${dupCount} 个）` : ''}` +
+            (skippedByConfig.length > 0
+              ? `（${skippedByConfig.length} 个项目不参与构建已跳过：${skippedByConfig.join('、')}）`
+              : '') +
+            '，右侧面板可看进度',
         );
       }
     } finally {
@@ -412,15 +447,33 @@ export default function RequirementListPage() {
   };
 
   /**
-   * 导出旧数据：把浏览器中现存的 requirements 原始字符串原样打包（不做任何转换）。
-   * 供旧版环境逃生——拿到文件后经「导入数据（兼容旧版）」自动转换为当前格式。
+   * 一键迁移旧数据：先自动下载一份原始数据备份，再把浏览器中残留的旧格式记录**就地转换**为当前格式。
+   * 迁移是「按 id 原地替换」，不走导出/导入文件往返——因此不会出现"数据均已存在、无需导入"。
    */
-  const handleExportLegacy = () => {
-    if (!exportLegacyRaw()) {
-      message.info('浏览器中暂无可导出的需求数据');
+  const handleMigrateLegacy = () => {
+    if (!legacyDataDetected) {
+      message.info('未检测到旧版数据，无需迁移');
       return;
     }
-    message.success('已导出浏览器中现存的原始需求数据');
+    modal.confirm({
+      title: '一键迁移旧数据',
+      content:
+        '将先自动下载一份原始数据备份文件，然后把浏览器中的旧版格式记录就地转换为当前格式（按 id 原地替换，不新增、不删除其他数据）。',
+      okText: '开始迁移',
+      cancelText: '取消',
+      onOk: () => {
+        const backedUp = exportLegacyRaw();
+        const { migrated, failed } = migrateLegacy();
+        if (migrated > 0) {
+          message.success(`已迁移 ${migrated} 条旧版数据${backedUp ? '，原始数据已下载备份' : ''}`);
+        } else if (backedUp) {
+          message.warning('未迁移任何数据（原始数据已下载备份，可人工核对）');
+        }
+        if (failed > 0) {
+          message.warning(`${failed} 条记录格式无法识别，已保持原样未改动`);
+        }
+      },
+    });
   };
 
   const handleExportAndClean = () => {
@@ -501,7 +554,7 @@ export default function RequirementListPage() {
             closable
             onClose={() => setLegacyNoticeClosed(true)}
             message="检测到旧版格式的需求数据"
-            description="请先点「导出旧数据」保存原文件，再用「导入数据（兼容旧版）」导入，即可自动转换为当前格式后继续使用。"
+            description="点工具栏的「一键迁移旧数据」即可：它会先自动下载一份原始数据备份，再把旧格式记录就地转换为当前格式。"
             style={{ marginBottom: 16 }}
             data-testid="legacy-data-alert"
           />
@@ -531,11 +584,15 @@ export default function RequirementListPage() {
               }}
             >
               <Button icon={<ImportOutlined />} data-testid="import-data-button">
-                导入数据（兼容旧版）
+                导入数据
               </Button>
             </Upload>
-            <Button onClick={handleExportLegacy} data-testid="export-legacy-data-button">
-              导出旧数据
+            <Button
+              onClick={handleMigrateLegacy}
+              disabled={!legacyDataDetected}
+              data-testid="migrate-legacy-data-button"
+            >
+              一键迁移旧数据
             </Button>
             <Button onClick={handleExportAll}>导出数据</Button>
             <Button onClick={handleExportAndClean}>导出并清理一月前数据</Button>

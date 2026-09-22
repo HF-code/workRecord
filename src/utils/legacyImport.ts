@@ -55,7 +55,9 @@ export const LEGACY_STATUS_TO_ENV: Record<string, BuildEnv> = {
  * 因为 `JSON.stringify` 会丢弃值为 `undefined` 的键，「该轨已被用户移除」在持久化/导出后
  * 同样表现为「键缺失」，两者不可区分。
  */
-function isLegacyRecord(r: Record<string, unknown>): boolean {
+export function isLegacyRecord(rec: unknown): boolean {
+  if (typeof rec !== 'object' || rec === null || Array.isArray(rec)) return false;
+  const r = rec as Record<string, unknown>;
   if (LEGACY_FEATURE_KEYS.some((k) => r[k] !== undefined)) return true;
   // 更早（双轨之前）的版本：两轨字段都不存在，此时必须同时带旧 status 才认定，
   // 避免把「两条轨都被用户移除」误判为旧数据。
@@ -170,9 +172,40 @@ export function normalizeRequirement(raw: unknown, now: string): Requirement | n
  * 供页面提示条使用（仅提示用户走「导出旧数据 → 导入数据」闭环，不自动改动数据）。
  */
 export function hasLegacyData(list: unknown[]): boolean {
-  return list.some(
-    (r) => typeof r === 'object' && r !== null && !Array.isArray(r) && isLegacyRecord(r as Record<string, unknown>),
-  );
+  return list.some(isLegacyRecord);
+}
+
+/**
+ * 列表级「一键迁移」：把列表中的旧格式记录**就地转换**为当前格式。
+ *
+ * 与导入（按 id 合并、可能跳过）不同，这里是原地替换，因此
+ * 「旧数据已经在浏览器里」这一最常见的场景无需导出/导入文件往返。
+ *
+ * - 只处理 `isLegacyRecord` 命中的记录，其余（已是当前格式）原样返回，不产生任何 diff；
+ * - 无法识别的记录**保持原样**（绝不丢数据）并计入 `failed`；
+ * - 时间戳沿用记录自身的值，仅缺失时补 `now`（迁移不算一次"更新"）。
+ *
+ * @param list 当前需求列表
+ * @param now 时间戳兜底值（ISO 字符串）
+ * @returns 迁移后的新列表与统计（`migrated + failed = 旧格式记录数`）
+ */
+export function migrateLegacyList(
+  list: Requirement[],
+  now: string,
+): { list: Requirement[]; migrated: number; failed: number } {
+  let migrated = 0;
+  let failed = 0;
+  const next = list.map((r) => {
+    if (!isLegacyRecord(r)) return r;
+    const normalized = normalizeRequirement(r, now);
+    if (!normalized) {
+      failed += 1;
+      return r;
+    }
+    migrated += 1;
+    return normalized;
+  });
+  return { list: next, migrated, failed };
 }
 
 /**

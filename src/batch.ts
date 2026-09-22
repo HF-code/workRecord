@@ -2,9 +2,18 @@
  * 批量操作纯函数：MR 目标汇总、构建目标去重（project+env）与统计。
  *
  * 数据模型约定（双轨并行，见 docs/plans/dual-track-rework-plan.md）：
- * - 勾选卡片 = 该需求**全部项目**直接进入批量范围（构建/MR 不再受项目配置「不参与构建」影响，代码都要合）；
+ * - 勾选卡片 = 该需求**全部项目**直接进入批量范围；
+ * - **构建口径**（卡片构建 / 批量构建）：全部项目 − 临时排除 − 配置「不参与构建」（`excludeFromBuild`），
+ *   见 getBuildItems()——项目配置页的开关只对构建生效（如固定不单独构建的小程序）；
+ * - **MR 口径**（卡片提交MR / 批量MR）：全部项目 − 临时排除，**不受「不参与构建」影响**（代码都要合），
+ *   见 getMrItems()；
  * - 临时排除：excluded[reqId] = 被用户在批量面板 X 掉的 itemId 列表（仅会话内，不回写数据）；
  * - 双轨：批量构建/MR 按需求的**已开始轨**逐轨展开，每轨作用于该轨当前环境。
+ *
+ * ⚠️ 改动纪律（踩过坑，勿再合并）：构建与 MR 的「项目范围」**必须各走各的函数**
+ * （getBuildItems / getMrItems）。历史教训：两者曾共用同一个范围函数（旧名 getBatchItems，
+ * 已改名废弃），过滤逻辑写在里面，导致「不参与构建」连坐 MR；后来为修 MR 把过滤整体删掉，
+ * 又反噬构建。任何一侧要增删范围条件，只改自己那条链路的函数，禁止塞进另一侧或重新合并。
  */
 import type { OverallStatus, Requirement, ProjectBranch, Track } from './types';
 import type { DevopsApp } from './config/devopsApps';
@@ -72,12 +81,56 @@ export interface BatchSummary {
 }
 
 /**
- * 取某需求的批量项目：全部项目 − excluded（用户 X 掉的）。
- * 不再受项目配置「不参与构建」影响——构建与 MR 覆盖全部项目（代码都要合）。
+ * 取某需求的 **MR / 展示口径**项目：全部项目 − excluded（用户 X 掉的）。
+ * 不受项目配置「不参与构建」影响——提交 MR 覆盖全部项目（代码都要合）。
+ * 仅供 MR 与纯展示使用；**构建范围请用 getBuildItems()**，勿在此处加任何构建相关过滤。
  */
-export function getBatchItems(req: Requirement, excluded: Record<string, string[]>): ProjectBranch[] {
+export function getMrItems(req: Requirement, excluded: Record<string, string[]>): ProjectBranch[] {
   const excludedIds = new Set(excluded[req.id] ?? []);
   return req.items.filter((it) => !excludedIds.has(it.id));
+}
+
+/**
+ * 项目是否被配置为「不参与构建」（项目配置页开关，如固定不单独构建的小程序）。
+ * ⚠️ 只允许**构建链路**（getBuildItems / collectBuildExcludedProjects）与纯展示调用；
+ * getMrItems() 及其下游（collectMrTargets、handleTrackMr）禁止调用——否则 MR 会再次被连坐。
+ */
+export function isBuildExcluded(project: string, apps: DevopsApp[]): boolean {
+  return apps.some((a) => a.app === project && a.excludeFromBuild);
+}
+
+/**
+ * 取某需求的**构建**项目：全部项目 − 临时排除 − 配置「不参与构建」。
+ * 与 getMrItems() 的唯一差异就是配置排除项——构建尊重配置，MR 不尊重。
+ */
+export function getBuildItems(
+  req: Requirement,
+  apps: DevopsApp[],
+  excluded: Record<string, string[]>,
+): ProjectBranch[] {
+  return getMrItems(req, excluded).filter((it) => !isBuildExcluded(it.project, apps));
+}
+
+/**
+ * 逐个需求取被配置「不参与构建」而排除出构建范围的项目名（保序去重，提示文案用）。
+ * 只统计实际参与本次批量的项目（已按临时排除过滤）。
+ */
+export function collectBuildExcludedProjects(
+  reqs: Requirement[],
+  apps: DevopsApp[],
+  excluded: Record<string, string[]>,
+): string[] {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const req of reqs) {
+    for (const it of getMrItems(req, excluded)) {
+      if (isBuildExcluded(it.project, apps) && !seen.has(it.project)) {
+        seen.add(it.project);
+        list.push(it.project);
+      }
+    }
+  }
+  return list;
 }
 
 /**
@@ -95,7 +148,7 @@ export function collectMrTargets(
   for (const req of reqs) {
     for (const track of startedTracks(req)) {
       const env = buildPlan.getTarget(req, track);
-      for (const it of getBatchItems(req, excluded)) {
+      for (const it of getMrItems(req, excluded)) {
         const gitUrl = apps.find((a) => a.app === it.project)?.gitUrl;
         if (!gitUrl) {
           skipped.push({
@@ -132,10 +185,12 @@ export function collectMrTargets(
 /**
  * 构建目标汇总：按需求的**已开始轨**展开，`project::buildOther` 去重合并——
  * 同项目同环境只构建一次，reqNames/reqIds 合并用于构建任务名展示与需求进度回写。
+ * 项目范围走 getBuildItems()：配置「不参与构建」的项目在此被剔除（MR 不受影响）。
  * dupCount = 项目实例数 − 构建目标数（即被合并掉的次数）。
  */
 export function collectBuildTargets(
   reqs: Requirement[],
+  apps: DevopsApp[],
   buildPlan: BuildPlanLike,
   excluded: Record<string, string[]>,
 ): { builds: BuildTarget[]; dupCount: number } {
@@ -145,7 +200,7 @@ export function collectBuildTargets(
     for (const track of startedTracks(req)) {
       const env = buildPlan.getTarget(req, track);
       const buildOther = buildPlan.getBuildOther(env);
-      for (const it of getBatchItems(req, excluded)) {
+      for (const it of getBuildItems(req, apps, excluded)) {
         itemCount += 1;
         const key = `${it.project}::${buildOther}`;
         const existing = map.get(key);
@@ -172,20 +227,22 @@ export function collectBuildTargets(
 }
 
 /**
- * 汇总统计：需求数 / 项目数（按轨展开后的 MR 触发数）/ 去重后构建任务数 / 跳过数。
+ * 汇总统计：需求数 / 项目数（按轨展开后的 MR 触发数，含「不参与构建」的项目）/
+ * 去重后构建任务数（已按配置剔除「不参与构建」项目）/ 跳过数。
  * skippedCount 由调用方从 collectMrTargets 结果传入。
  */
 export function summarize(
   reqs: Requirement[],
+  apps: DevopsApp[],
   buildPlan: BuildPlanLike,
   excluded: Record<string, string[]>,
   skippedCount: number,
 ): BatchSummary {
   const itemCount = reqs.reduce((sum, req) => {
-    const items = getBatchItems(req, excluded).length;
+    const items = getMrItems(req, excluded).length;
     return sum + items * startedTracks(req).length;
   }, 0);
-  const { builds } = collectBuildTargets(reqs, buildPlan, excluded);
+  const { builds } = collectBuildTargets(reqs, apps, buildPlan, excluded);
   return {
     reqCount: reqs.length,
     itemCount,

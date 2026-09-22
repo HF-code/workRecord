@@ -64,11 +64,18 @@ flowchart LR
     EX --> UP
 ```
 
-### 4.2 旧版数据逃生闭环
+### 4.2 旧版数据迁移：一键迁移（主路径）+ 文件导入（跨环境）
 
-1. 旧版环境点「**导出旧数据**」→ 得到 `{ version: 'legacy-raw', exportedAt, raw }`，`raw` 是 localStorage 原始字符串（无损，即使已损坏也能取回）；
-2. 新版环境点「**导入数据（兼容旧版）**」→ 自动解包并转换为当前格式；
-3. 若浏览器中现存的仍是旧格式，页面顶部给出一条可关闭的提示条指引上述闭环（仅提示，**不自动改动数据**）。
+浏览器里残留旧格式数据是最常见的场景，此时**不需要**导出/导入文件往返——「**一键迁移旧数据**」按钮直接就地转换：
+
+1. 自动下载一份**原始数据备份**（`{ version: 'legacy-raw', exportedAt, raw }`，`raw` 是 localStorage 原始字符串，无损，即使内容已损坏也能取回）；
+2. 调 `migrateLegacyList()` 把列表中**旧格式记录按 id 原地替换**为当前格式（不新增、不删除其他数据）；
+3. 汇总提示迁移条数；无法识别的记录**保持原样不丢数据**并单独提示。
+
+> 为什么必须"原地替换"而非走导入：导入的合并语义是「按 id 去重，已存在则跳过」，因此把浏览器里已有的旧数据导出再导入，只会得到"数据均已存在、无需导入"——流程是死的。原地替换才是这个场景的正确语义。
+> 导入（按 id 合并）仍然保留，用于**跨环境/跨设备**搬数据：旧版本自己的「导出数据」（v1 文件）→ 新版「导入数据」。
+
+检测到旧格式时页面顶部给出可关闭提示条，指引点击「一键迁移旧数据」（仅提示，**不自动改动数据**）。
 
 ### 4.3 导入契约（同一入口识别四种输入）
 
@@ -101,18 +108,18 @@ flowchart LR
 
 | 文件 | 删除内容 |
 |---|---|
-| `hooks/useWorkTracker.ts` | `migrateToDualTrackOnce` / `stripLegacyTrackTargetsOnce` 及两个标记键；初始化简化为 `loadRequirements()`；`upsert` 去掉 `buildItems` 透传 |
+| `hooks/useWorkTracker.ts` | `migrateToDualTrackOnce` / `stripLegacyTrackTargetsOnce` 及两个标记键；初始化简化为 `loadRequirements()`；`upsert` 去掉 `buildItems` 透传；新增 `migrateLegacy()`（一键迁移入口，委托 `legacyImport.migrateLegacyList`） |
 | `storage.ts` | `migrateLegacyBuildPlan` / `migrateDevopsAppsExcludeFlag` 及旧键常量；新增 `loadRequirementsRaw()`（仅供「导出旧数据」） |
 | `config/track.ts` | `backfillRequirement` / `LEGACY_STATUS_TO_ENV`（能力移交 `utils/legacyImport.ts`），文件回归纯派生函数 |
 | `pages/QuickBuildPage.tsx` | `loadState` 中「旧扁平 `projects` 迁移为批次」分支 |
 | `export.ts` | 导入解析与校验整体移交 `utils/legacyImport.ts`；`downloadJson` 收为内部实现，对外提供 `exportAll` / `exportArchive` / `exportLegacyRaw` |
-| `pages/RequirementListPage.tsx` | 过期迁移注释；工具栏文案与按钮 |
+| `pages/RequirementListPage.tsx` | 过期迁移注释；工具栏按钮（「导入数据」+「一键迁移旧数据」）；旧数据提示条 |
 
 ## 五、改动文件
 
 **新增**
 
-- `src/utils/legacyImport.ts`：`LEGACY_STATUS_TO_ENV`、`normalizeRequirement()`、`hasLegacyData()`、`parseImportFile()`
+- `src/utils/legacyImport.ts`：`LEGACY_STATUS_TO_ENV`、`normalizeRequirement()`、`isLegacyRecord()`、`hasLegacyData()`、`migrateLegacyList()`（一键迁移的就地转换）、`parseImportFile()`
 
 **修改**
 
@@ -124,7 +131,7 @@ flowchart LR
 - `src/components/RequirementForm.tsx`（items 受控 + 行级必填）
 - `src/components/ProjectSelect.tsx`（新增可选 `status` 透传）
 - `src/utils/openTabs.ts`（锚点可靠多开）
-- `src/pages/RequirementListPage.tsx`（统一 MR 入口 + 阈值确认 + 工具栏 + 旧数据提示条）
+- `src/pages/RequirementListPage.tsx`（统一 MR 入口与阈值确认 + 工具栏「一键迁移旧数据」+ 旧数据提示条）
 - `src/pages/QuickBuildPage.tsx`（删旧结构迁移分支）
 
 **未改动**：`batch.ts`、`RequirementCard`、`BuildPanel`、`ArtifactList`、`useBuildTasks`、`build.ts`；localStorage 键名与构建/制品请求链路均不变。
@@ -147,12 +154,13 @@ flowchart LR
 9. 卡片上的「提交MR」走同一提示与阈值逻辑；
 10. 提示语为「已发起打开 N 个 MR 页面」；若只弹出一个，可从面板 MR 清单逐条点开。
 
-### 数据来源单点化
+### 数据来源单点化（一键迁移）
 
-11. 工具栏出现「导入数据（兼容旧版）」与「导出旧数据」；
-12. 点「导出旧数据」→ 得到 `version: 'legacy-raw'` 文件；用「导入数据（兼容旧版）」导入同一文件 → 数据正常、无重复 id 冲突提示；
-13. 构造一条含 `currentEnv`（如 `pre`）的旧格式记录放入导入文件 → 导入后该需求 `envWeizan === 'pre'`；含 `versionPipeline: 'starOnly'` 的记录导入后微赞轨被移除；
-14. 浏览器 localStorage 里若存在旧格式记录 → 页面顶部出现可关闭提示条。
+11. 工具栏为「导入数据」+「一键迁移旧数据」；无旧版数据时「一键迁移旧数据」为禁用态；
+12. 手工把一条旧格式记录（含 `currentEnv: 'pre'`）写进 localStorage 的 `work-tracker:requirements:v1` → 刷新：顶部出现提示条、「一键迁移旧数据」变为可用；
+13. 点「一键迁移旧数据」→ 确认弹窗 → 自动下载备份文件（`version: 'legacy-raw'`）→ 该记录被**就地**转换为当前格式（`envWeizan === 'pre'`、旧键清除、id 与时间戳不变），列表条数不变，**不再出现"数据均已存在、无需导入"**，提示条消失；
+14. 换成含 `versionPipeline: 'starOnly'` 的旧记录重复上述 → 迁移后微赞轨被移除；再构造一条 `tapdUrl` 非法的旧记录 → 迁移提示「N 条记录格式无法识别，已保持原样未改动」，该记录数据不丢；
+15. 跨环境路径仍可用：旧版本的「导出数据」（v1 文件）→ 新版「导入数据」。
 
 ## 七、验证记录（2026-09-21）
 
@@ -167,4 +175,10 @@ flowchart LR
   7. `hasLegacyData` 判定（含"有双轨键即非旧数据"）；
   8. 四种输入形态（朴素数组 / v1 / v2 / legacy-raw）均能解析并完成拆轨；
   9. 非 JSON / 结构不可识别 / `legacy-raw` 缺 `raw` → 抛出可读错误。
-- 待人工验证（需浏览器操作）：表单编辑回显（Bug 1）与 MR 多标签页打开（Bug 2）两条 UI 路径，见第六章第 1-13 步。
+- `migrateLegacyList`（一键迁移的就地转换）再跑 5 组断言，全部通过：
+  1. 旧格式判定边界（`null` / 非对象 / 数组 → false；`currentEnv` / `versionPipeline` / `status` → true；有双轨键 → false）；
+  2. 就地替换：`migrated=1`、`failed=1`、条数不变；id / `createdAt` / `updatedAt` 原样保留、旧键（`currentEnv`/`status`/`buildItems`/`targetWeizan`）清除；
+  3. **已是当前格式的记录按引用原样返回**（不产生无意义 diff）、无法识别的记录按引用原样保留（不丢数据）；
+  4. 幂等：迁移后的列表再迁移一次为 0 变更；迁移成功的记录不再命中提示条；
+  5. 空列表 / 全为新格式 → `{ migrated: 0, failed: 0 }`，可据此跳过一次 `setState`。
+- 待人工验证（需浏览器操作）：表单编辑回显（Bug 1）、MR 多标签页打开（Bug 2）、一键迁移（见第六章第 1-15 步）。

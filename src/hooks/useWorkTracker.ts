@@ -5,6 +5,7 @@ import type { BranchConfig } from '../config/branches';
 import { DEFAULT_BRANCHES } from '../config/branches';
 import type { BuildEnv } from '../build';
 import { trackBuildEnv } from '../config/track';
+import { migrateLegacyList } from '../utils/legacyImport';
 import {
   loadBranches,
   loadDevopsApps,
@@ -82,6 +83,17 @@ export function useRequirements() {
     setRequirements((list) => list.filter((r) => !ids.has(r.id)));
   };
 
+  /**
+   * 一键迁移：把库中残留的旧格式记录**就地替换**为当前格式（按 id 原地转换，不新增、不丢数据）。
+   * 转换规则见 utils/legacyImport.ts；原始数据由调用方在迁移前自行备份。
+   * @returns 迁移成功条数与无法识别（保持原样）条数
+   */
+  const migrateLegacy = (): { migrated: number; failed: number } => {
+    const { list, migrated, failed } = migrateLegacyList(requirements, new Date().toISOString());
+    if (migrated > 0) setRequirements(list);
+    return { migrated, failed };
+  };
+
   /** 按 id 去重合并导入数据，返回实际新增的条目 */
   const merge = (imported: Requirement[]): Requirement[] => {
     const existingIds = new Set(requirements.map((r) => r.id));
@@ -102,6 +114,7 @@ export function useRequirements() {
     remove,
     removeMany,
     merge,
+    migrateLegacy,
   };
 }
 
