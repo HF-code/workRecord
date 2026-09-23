@@ -60,7 +60,7 @@ server: {
 
 1. `koa-static` 托管前端构建产物（`WEB_DIST_DIR` 环境变量优先，默认兄弟目录 `mywork/dist`；目录不存在时容错，仅提供 API）
 2. 反代两个端点：
-   - `POST /devops-api/deploy/build` → `POST https://devops.vzan.com/deploy/build`
+   - `POST /devops-api/deploy/build` → `POST https://devops.vzan.com/deploy/build`（**经 `devopsClient.submitBuild` 统一适配**：单步提交、payload 规范化、响应解析）
    - `GET /devops-api/deploy/branch?app=xxx` → `GET https://devops.vzan.com/deploy/branch?app=xxx`
 3. 头处理：
    - 入站 `Cookie` 头直接透传为出站 `Cookie`（用户通过其他工具把登录 cookie 写入本站域名，浏览器同源请求自动携带）
@@ -68,6 +68,30 @@ server: {
    - `Host`/`Origin`/`Referer` 强制改写为 devops 域（Django CSRF 校验需要，参考扩展 content-script 代理的教训）
 4. 15s `AbortController` 超时；异常返回 502 + 错误信息
 5. 监听 `PORT`（默认 8080）
+
+### 3.2.1 构建协议适配层（2026-09-23 新增）
+
+上游运维平台构建接口已由「两步式」改为「单步式」（vzan_crx 扩展率先对齐）：
+
+| 维度 | 旧（已废弃） | 新（当前） |
+| --- | --- | --- |
+| 提交方式 | 先 `GET /deploy/build?...&get_build_number=1` 取纯数字编号，再 `POST /deploy/build` 携带 `number` | 直接 `POST /deploy/build` |
+| 编号来源 | 第一步 GET 返回 | 提交响应体 `number` 字段 |
+| 成功判定 | POST 返回 200 | `status === 200 && (body.number \|\| body.app)` |
+| 失败文案 | 响应体 `detail` | `detail` → `error_message` → `error` → 原始 JSON，兜底 `HTTP <status>` |
+
+适配职责全部收口在 mywork-server：
+
+1. `devopsClient.submitBuild(cookie, payload)` 是**唯一协议适配点**：
+   - 规范化 payload：剔除旧两步残留的 `number`，其余字段（含 `live_dcoker_branch` 等扩展字段）原样透传，`app` 必填校验；
+   - 解析响应：成功判定与失败文案优先级见上表，`status` 与原始响应体原样回传。
+2. `POST /devops-api/deploy/build` 不再纯透传，改为经 `submitBuild`；前端拿到的一律是「提交成功 + 真实编号」或「失败/排队文案」。
+3. 钉钉链路 `devopsClient.requestBuildAs()` 内部复用 `submitBuild`（DRY），避免两份协议实现各自漂移。
+4. 旧入口兼容降级：`GET /devops-api/deploy/build?...&get_build_number=1`（老版前端缓存页面会用）若上游不再返回纯数字，中间件回 `200 + { detail: "构建接口已升级为单步提交，请刷新页面后重试" }`，避免出现「获取构建编号失败：<整段 JSON>」这类难懂提示。
+
+约束：排队文案「上一任务尚未完成，请耐心等待」必须原样透传（前端 `BUILD_BUSY_DETAIL` 为精确匹配，命中后按配置间隔自动重试）。
+
+前端（`src/build.ts`）本次同步改为一步：`requestBuild` 直接 POST，编号取自响应体，构建记录页链接使用真实编号（编号缺省时退 `0` 保证链接可用）。
 
 ### 3.3 cookie 写入流程（远程登录态）
 
@@ -95,11 +119,13 @@ npm start                                  # 或 node dist/index.js，默认 :80
 | 文件 | 动作 | 说明 |
 | --- | --- | --- |
 | `vite.config.ts` | 修改 | 增加 `server.proxy` |
-| `src/build.ts` | 修改 | API 改相对路径 `/devops-api`；`getCsrfToken()` 仅从 `document.cookie` 解析 |
+| `src/build.ts` | 修改 | API 改相对路径 `/devops-api`；`getCsrfToken()` 仅从 `document.cookie` 解析；**构建改单步（编号取响应体）** |
 | `src/components/BuildModal.tsx` | 修改 | 构建弹窗（无 cookie 录入 UI，csrftoken 无值时提示未登录） |
 | `mywork-server/package.json` | 新增（独立项目） | koa、@koa/router、koa-static、koa-bodyparser 及对应 @types；tsx、typescript、@types/node；scripts: dev/build/start |
 | `mywork-server/tsconfig.json` | 新增（独立项目） | NodeNext ESM、strict |
-| `mywork-server/src/index.ts` | 新增（独立项目） | Koa2 实例 + 静态托管 + 转发路由（/deploy/build、/deploy/branch、/deploy/application）；WEB_DIST_DIR 环境变量可配前端产物目录 |
+| `mywork-server/src/index.ts` | 新增（独立项目） | Koa2 实例 + 静态托管 + 转发路由（/deploy/build、/deploy/branch、/deploy/application）；WEB_DIST_DIR 环境变量可配前端产物目录；**构建提交经 `submitBuild` 适配、旧取号请求降级提示** |
+| `mywork-server/src/devopsClient.ts` | 修改 | **新增 `submitBuild`：唯一协议适配点**（单步提交、payload 规范化、响应解析）；`requestBuildAs` 复用同一实现 |
+| `mywork-server/src/dingtalk.ts` | 修改 | `/构建` 命令适配构建编号缺省（上游未返回编号时回退 0） |
 | `docs/build-cross-origin-plan.md` | 修改 | 本文档 |
 
 ---
@@ -111,6 +137,9 @@ npm start                                  # 或 node dist/index.js，默认 :80
 - [ ] 清空 cookie 后再点：提示"未登录"或 401/403 提示登录态失效
 - [ ] `live-h5-2` 项目各环境分支解析正常
 - [ ] `npm run build` + `mywork-server/` 启动后，向本站域名写入 cookie 可正常构建（远程通路）
+- [ ] 构建成功时，记录页链接的编号与运维平台构建记录编号一致（真实编号，非本地推算）
+- [ ] 连续触发同一应用：第二次原样展示「上一任务尚未完成，请耐心等待」并按配置间隔自动重试
+- [ ] 钉钉 `/构建 <项目> <环境>` 单步提交成功并回复真实编号，完成后正常推送制品
 
 ---
 
@@ -121,3 +150,4 @@ npm start                                  # 或 node dist/index.js，默认 :80
 - 2026-08-17（二）：取消应用内 cookie 粘贴 UI 与 localStorage / `x-devops-cookie` 方案；改为用户自行通过其他工具把 cookie 写入本站域名，前端只读 `document.cookie`，服务端透传入站 `Cookie` 头。
 - 2026-08-17（三）：修复本地 `CSRF Failed: Origin checking failed` —— 浏览器 POST 自动带 `Origin: http://localhost:5173`，`changeOrigin` 只改 `Host` 不改 `Origin`；在 Vite 代理加 `headers: { Origin, Referer }` 改写为 devops 域（Postman 不带 Origin 故直连可通）。
 - 2026-08-20：服务端从 `mywork/server/` 迁出为独立项目 `mywork-server/`，框架 Fastify → Koa2；前端产物目录改为 `WEB_DIST_DIR` 环境变量可配（默认 `../mywork/dist`）；原 `mywork/server/` 目录删除。
+- 2026-09-23：上游构建接口由「两步式」改「单步式」（构建编号由提交响应体返回，与 vzan_crx 对齐）。前端 `src/build.ts` 改为一步提交（编号取响应体，记录页链接用真实编号）；协议差异全部收口到 `mywork-server` 的 `devopsClient.submitBuild`（钉钉 `/构建` 复用同一实现）；`GET ?get_build_number=1` 旧取号请求保留友好降级提示。
